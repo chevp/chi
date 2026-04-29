@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { CHI_OS } from "../platform.js";
 import { c, kv, line, section } from "../ui.js";
 import { activeProviderName, getProvider } from "../provider/index.js";
@@ -10,17 +11,128 @@ import {
   recentCommits,
   repoRoot,
   shortStatus,
+  submoduleStatusRecursive,
   upstreamRef,
 } from "../git/index.js";
+import { commandExists, execSync } from "../spawn.js";
+import { parseFrontmatter, parseFrontmatterFile, statusBadge } from "../frontmatter.js";
 
 const HELP = `chi status — overview of the current repo and chi-cli configuration.
 
 Usage: chi status [options]
 
 Options:
-  -s, --short   only the one-line summary (no recent commits)
+  -s, --short   only the one-line summary (no recent commits, no submodules)
   -h, --help    show this help
 `;
+
+interface IssueRow {
+  num: string;
+  title: string;
+  labels: string;
+  assignees: string;
+  body: string;
+}
+
+interface PrRow {
+  num: string;
+  title: string;
+  isDraft: boolean;
+  head: string;
+  review: string;
+  author: string;
+}
+
+async function fetchGhIssues(timeoutSec: number): Promise<IssueRow[] | null> {
+  const r = execSync(
+    "gh",
+    [
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      "5",
+      "--json",
+      "number,title,labels,assignees,body",
+      "--jq",
+      '.[] | "\\(.number)\\t\\(.title)\\t\\([.labels[].name]|join(","))\\t\\([.assignees[].login]|join(","))\\t\\(.body|@base64)"',
+    ],
+    { timeoutMs: timeoutSec * 1000 },
+  );
+  if (!r.ok) return null;
+  const out: IssueRow[] = [];
+  for (const ln of r.stdout.split(/\r?\n/)) {
+    if (!ln) continue;
+    const [num, title, labels, assignees, bodyB64] = ln.split("\t");
+    let body = "";
+    if (bodyB64) {
+      try {
+        body = Buffer.from(bodyB64, "base64").toString("utf8");
+      } catch {
+        body = "";
+      }
+    }
+    out.push({
+      num: num ?? "",
+      title: title ?? "",
+      labels: labels ?? "",
+      assignees: assignees ?? "",
+      body,
+    });
+  }
+  return out;
+}
+
+async function fetchGhPrs(timeoutSec: number): Promise<PrRow[] | null> {
+  const r = execSync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      "5",
+      "--json",
+      "number,title,isDraft,headRefName,reviewDecision,author",
+      "--jq",
+      '.[] | "\\(.number)\\t\\(.title)\\t\\(.isDraft)\\t\\(.headRefName)\\t\\(.reviewDecision // "")\\t\\(.author.login)"',
+    ],
+    { timeoutMs: timeoutSec * 1000 },
+  );
+  if (!r.ok) return null;
+  const out: PrRow[] = [];
+  for (const ln of r.stdout.split(/\r?\n/)) {
+    if (!ln) continue;
+    const [num, title, isDraft, head, review, author] = ln.split("\t");
+    out.push({
+      num: num ?? "",
+      title: title ?? "",
+      isDraft: isDraft === "true",
+      head: head ?? "",
+      review: review ?? "",
+      author: author ?? "",
+    });
+  }
+  return out;
+}
+
+function prStateTag(row: PrRow): string {
+  if (row.isDraft) return c.dim("draft");
+  switch (row.review) {
+    case "APPROVED":
+      return c.green("approved");
+    case "CHANGES_REQUESTED":
+      return c.red("changes-requested");
+    case "REVIEW_REQUIRED":
+      return c.yellow("review-required");
+    case "":
+      return c.dim("open");
+    default:
+      return c.dim(row.review);
+  }
+}
 
 export async function run(argv: string[]): Promise<number> {
   const first = argv[0];
@@ -59,8 +171,8 @@ export async function run(argv: string[]): Promise<number> {
     if (val) envSet.push([v, val]);
   }
   if (envSet.length > 0) {
-    const first = envSet[0]!;
-    kv("env", `${first[0]}=${first[1]}`);
+    const f = envSet[0]!;
+    kv("env", `${f[0]}=${f[1]}`);
     for (let i = 1; i < envSet.length; i++) {
       const [k, val] = envSet[i]!;
       process.stdout.write(`  ${" ".padEnd(18)} ${k}=${val}\n`);
@@ -103,11 +215,113 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(shortStatus());
   }
 
+  // ---- submodules ---------------------------------------------------------
+  if (!short && existsSync(join(root, ".gitmodules"))) {
+    section("submodules");
+    const sm = submoduleStatusRecursive(root);
+    if (!sm.trim()) {
+      process.stdout.write(`  ${c.dim("(none initialized)")}\n`);
+    } else {
+      for (const ln of sm.split(/\r?\n/)) {
+        if (!ln) continue;
+        const flag = ln.charAt(0);
+        const rest = ln.slice(1);
+        switch (flag) {
+          case " ":
+            process.stdout.write(`  ${c.green("✓")} ${rest}\n`);
+            break;
+          case "+":
+            process.stdout.write(`  ${c.yellow("±")} ${rest} ${c.dim("(out of sync)")}\n`);
+            break;
+          case "-":
+            process.stdout.write(`  ${c.red("−")} ${rest} ${c.dim("(not initialized)")}\n`);
+            break;
+          case "U":
+            process.stdout.write(`  ${c.red("!")} ${rest} ${c.dim("(merge conflict)")}\n`);
+            break;
+          default:
+            process.stdout.write(`  ${ln}\n`);
+        }
+      }
+    }
+  }
+
   // ---- recent commits -----------------------------------------------------
   if (!short) {
     section("recent commits");
     process.stdout.write(recentCommits(5));
     line();
+  }
+
+  // ---- GitHub: issues + pull requests -------------------------------------
+  if (!short && commandExists("gh") && execSync("gh", ["auth", "status"]).ok) {
+    const ghTimeout = Number.parseInt(process.env.CHI_GH_TIMEOUT ?? "3", 10) || 3;
+    const [issues, prs] = await Promise.all([
+      fetchGhIssues(ghTimeout),
+      fetchGhPrs(ghTimeout),
+    ]);
+
+    section("issues");
+    if (issues && issues.length > 0) {
+      for (const row of issues) {
+        const fm = row.body
+          ? parseFrontmatter(row.body)
+          : { name: "", status: "", progress: "" };
+        const meta: string[] = [];
+        if (fm.progress) meta.push(c.dim(`(${fm.progress})`));
+        if (row.labels) meta.push(c.dim(`[${row.labels}]`));
+        if (row.assignees) meta.push(c.dim(`@${row.assignees}`));
+        process.stdout.write(
+          `  ${c.cyan(`#${row.num}`)} ${statusBadge(fm.status).padEnd(11)} ${row.title}${
+            meta.length ? ` ${meta.join(" ")}` : ""
+          }\n`,
+        );
+      }
+    } else {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    }
+
+    section("pull requests");
+    if (prs && prs.length > 0) {
+      for (const row of prs) {
+        const tag = prStateTag(row);
+        process.stdout.write(
+          `  ${c.cyan(`#${row.num}`)} ${tag.padEnd(9)} ${row.title} ${c.dim(`(${row.head} by @${row.author})`)}\n`,
+        );
+      }
+    } else {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    }
+  }
+
+  // ---- plans --------------------------------------------------------------
+  if (!short) {
+    const plansDir = join(root, ".chi", "plans");
+    const altDir = join(root, ".che", "plans");
+    let dirToUse = "";
+    if (existsSync(plansDir) && statSync(plansDir).isDirectory()) dirToUse = plansDir;
+    else if (existsSync(altDir) && statSync(altDir).isDirectory()) dirToUse = altDir;
+
+    if (dirToUse) {
+      const entries = readdirSync(dirToUse).filter((e) => e.endsWith(".md") && e !== "README.md");
+      if (entries.length > 0) {
+        section("plans");
+        for (const entry of entries) {
+          const file = join(dirToUse, entry);
+          const fm = parseFrontmatterFile(file);
+          const stem = entry.replace(/\.md$/, "");
+          const name = fm.name || stem;
+          const badge = statusBadge(fm.status);
+          const extra = fm.progress ? ` ${c.dim(`(${fm.progress})`)}` : "";
+          process.stdout.write(
+            `  ${badge.padEnd(11)} ${name}${extra} ${c.dim(`(${entry})`)}\n`,
+          );
+        }
+      } else if (process.env.CHI_STATUS_SHOW_EMPTY === "1") {
+        section("plans");
+        process.stdout.write(`  ${c.dim(`(no plans in ${dirToUse})`)}\n`);
+      }
+    }
   }
 
   line();

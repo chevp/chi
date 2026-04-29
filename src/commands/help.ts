@@ -3,22 +3,29 @@ const TEXT = `chi — collection of small CLI utilities (Node.js port of che-cli
 Usage: chi <command> [args]
 
 Commands:
-  status              git status + chi-cli config (provider, model, env)
-  help                show this message
-
-  (not yet ported — coming in subsequent phases)
-  commit              stage all + AI-generated commit message
+  commit              stage all + AI-generated commit message (+ optional push)
   ship                add + commit + push, recursively into submodules
-  flow <branch>       start a flow branch
-  done                finish active flow
-  issue [sub]         open / list / close GitHub issues
-  explain [question]  ask the active LLM to diagnose the last failure
-  init                provision local ollama
-  run <name>          execute a workflow
-  workflow <sub>      list / show / run workflows
-  reinstall           re-run scripts/reinstall.sh
-  config [key] [val]  view or change persistent settings
-  doctor [target]     verify deps and providers
+                      (init missing submodules, ff-pull on a branch);
+                      in flow mode: push -u + open/update draft PR
+  flow <branch>       start a flow branch (pull base, checkout new, mark repo)
+  done                finish active flow: gh pr merge --squash --auto, back to base
+  issue [sub] [args]  open / list / close GitHub issues (AI-drafted body);
+                      'chi issue [text]' is shorthand for 'chi issue create [text]'
+  explain [question]  ask the active LLM to diagnose the last chi ship/commit failure
+                      (read-only — prints a suggested command, never executes)
+  init                provision local ollama (verify binary, start server, pull model)
+  run <name>          execute a workflow from .che/workflows/<name>.yml
+                      (alias for: chi workflow run <name>)
+  workflow <sub>      list / show / run workflows from .che/workflows/
+  <trigger> [args]    any workflow with 'trigger: <name>' in its YAML can be
+                      run as 'chi <name>' — shadows the built-ins above
+  reinstall           re-run the current repo's scripts/reinstall.sh
+  status              git status + chi-cli config (provider, model, env)
+  config [key] [val]  view or change persistent settings (~/.chi/config);
+                      e.g. 'chi config provider claude-code'
+  doctor [target]     verify deps and providers (git, gh, docker, ollama,
+                      claude-code, copilot, workflow)
+  help                show this message
 
 Run 'chi <command> --help' for command-specific options.
 `;

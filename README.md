@@ -4,8 +4,8 @@ A Node.js port of [che-cli](https://github.com/chevp/che-cli). Same UX,
 TypeScript implementation, hand-rolled command dispatch (no commander/yargs),
 no runtime dependencies.
 
-> **Status:** Phase 1 — scaffolding + `chi status` end-to-end. Other commands
-> stubbed; see [Porting status](#porting-status) below.
+> **Status:** Full command-set ported. See [Porting status](#porting-status)
+> for the per-command mapping.
 
 ```sh
 $ chi status
