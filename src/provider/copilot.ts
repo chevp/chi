@@ -1,11 +1,5 @@
-import { spawnSync } from "node:child_process";
 import type { Provider } from "./types.js";
-
-function commandExists(bin: string): boolean {
-  const probe = process.platform === "win32" ? "where" : "which";
-  const r = spawnSync(probe, [bin], { stdio: "ignore" });
-  return r.status === 0;
-}
+import { commandExists, execAsync } from "../spawn.js";
 
 export const copilotProvider: Provider = {
   name: "copilot",
@@ -22,7 +16,14 @@ export const copilotProvider: Provider = {
     return true;
   },
 
-  async generate(_prompt: string): Promise<string> {
-    throw new Error("copilot provider: generate() not yet ported (Phase 2)");
+  async generate(prompt: string): Promise<string> {
+    if (!commandExists("copilot")) {
+      throw new Error("copilot CLI not on PATH");
+    }
+    const r = await execAsync("copilot", ["-p", "--allow-all-tools"], { input: prompt });
+    if (!r.ok) {
+      throw new Error(r.stderr.trim() || `copilot exited with status ${r.status}`);
+    }
+    return r.stdout;
   },
 };

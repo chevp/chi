@@ -1,4 +1,6 @@
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import { c } from "../ui.js";
 
 export interface GitResult {
   ok: boolean;
@@ -99,3 +101,127 @@ export function recentCommits(n = 5): string {
     "--pretty=format:  %C(auto)%h%Creset %s %C(dim)(%cr)%Creset",
   ]).stdout;
 }
+
+export function gitDir(cwd?: string): string | null {
+  const r = git(["rev-parse", "--git-dir"], cwd);
+  if (!r.ok) return null;
+  return r.stdout.trim();
+}
+
+export function submoduleStatusRecursive(cwd?: string): string {
+  return git(["submodule", "status", "--recursive"], cwd).stdout;
+}
+
+/**
+ * Append a structured failure record so `chi explain` can read it later. The
+ * log lives at <gitDir>/chi-last-error.log — one per repo, overwritten on each
+ * failure.
+ */
+export function recordError(
+  cmd: string,
+  exitCode: number | null,
+  output: string,
+  cwd?: string,
+): void {
+  const dir = gitDir(cwd);
+  if (!dir) return;
+  const ts = new Date().toISOString();
+  const status = git(["status", "-sb"], cwd).stdout || "";
+  const log = git(["log", "-5", "--oneline"], cwd).stdout || "";
+  const remote = git(["remote", "-v"], cwd).stdout || "";
+  const body =
+    `chi-cli error log\n` +
+    `timestamp: ${ts}\n` +
+    `command:   ${cmd}\n` +
+    `exit:      ${exitCode ?? "?"}\n` +
+    `cwd:       ${process.cwd()}\n` +
+    `\n--- output ---\n${output}\n` +
+    `\n--- git status -sb ---\n${status}` +
+    `\n--- git log -5 --oneline ---\n${log}` +
+    `\n--- git remote -v ---\n${remote}`;
+  try {
+    writeFileSync(`${dir}/chi-last-error.log`, body);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface PushOptions {
+  /** Extra args appended to `git push`, e.g. ["-u", "origin", "feat/x"]. */
+  args?: string[];
+  /** Working directory. Defaults to process.cwd(). */
+  cwd?: string;
+}
+
+/**
+ * `git push` with a single recoverable retry on non-fast-forward / fetch-first
+ * rejections. On reject:
+ *   1) `git pull --rebase`,
+ *   2) if the rebase produces conflicts → abort and surface them,
+ *   3) otherwise retry the push exactly once.
+ *
+ * Logs unrecoverable failures to <gitDir>/chi-last-error.log and points the
+ * user at `chi explain`.
+ */
+export function pushWithRecovery(opts: PushOptions = {}): number {
+  const args = opts.args ?? [];
+  const cwd = opts.cwd;
+  const cmd = `git push ${args.join(" ")}`.trim();
+
+  const first = git(["push", ...args], cwd);
+  process.stdout.write(first.stdout);
+  if (first.ok) return 0;
+
+  const out = first.stderr || first.stdout;
+  const rejected = /rejected.*(fetch first|non-fast-forward)|Updates were rejected/.test(out);
+  if (!rejected) {
+    process.stderr.write(out);
+    recordError(cmd, first.status, out, cwd);
+    process.stderr.write(
+      `\n${c.red(`chi ship: push failed (exit ${first.status ?? "?"})`)}\n` +
+        `run ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`,
+    );
+    return first.status ?? 1;
+  }
+
+  process.stderr.write(`${c.dim("chi ship: remote moved — pulling --rebase, retrying push")}\n`);
+  const rebase = git(["pull", "--rebase"], cwd);
+  if (!rebase.ok) {
+    process.stderr.write(out);
+    process.stderr.write(c.dim(rebase.stderr || rebase.stdout));
+    const dir = gitDir(cwd);
+    const inRebase =
+      dir !== null && (existsSync(`${dir}/rebase-merge`) || existsSync(`${dir}/rebase-apply`));
+    if (inRebase) {
+      process.stderr.write(`\n${c.red("chi ship: rebase produced conflicts — aborting")}\n`);
+      const conflicts = git(["diff", "--name-only", "--diff-filter=U"], cwd).stdout.trim();
+      if (conflicts) process.stderr.write(`conflicting files:\n${conflicts}\n`);
+      git(["rebase", "--abort"], cwd);
+      process.stderr.write(
+        c.dim(
+          "changes left in working tree as before push; pull manually and resolve\n",
+        ),
+      );
+    }
+    recordError(`${cmd} → pull --rebase failed`, rebase.status, rebase.stderr || rebase.stdout, cwd);
+    process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+    return rebase.status ?? 1;
+  }
+
+  const retry = git(["push", ...args], cwd);
+  process.stdout.write(retry.stdout);
+  if (retry.ok) {
+    process.stderr.write(`${c.green("✓ push succeeded after rebase")}\n`);
+    return 0;
+  }
+
+  const retryOut = retry.stderr || retry.stdout;
+  process.stderr.write(retryOut);
+  recordError(`${cmd} (after pull --rebase)`, retry.status, retryOut, cwd);
+  process.stderr.write(
+    `\n${c.red("chi ship: push still failing after one retry")}\n` +
+      `run ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`,
+  );
+  return retry.status ?? 1;
+}
+

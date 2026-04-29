@@ -1,4 +1,5 @@
 import type { Provider } from "./types.js";
+import { commandExists, execAsync } from "../spawn.js";
 
 const HOST = (): string => process.env.CHI_OLLAMA_HOST ?? "http://localhost:11434";
 const MODEL = (): string => process.env.CHI_OLLAMA_MODEL ?? "llama3.2";
@@ -15,6 +16,23 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * If the server is already responding, returns true immediately. Otherwise
+ * spawns `ollama serve` in the background and waits up to `timeoutSec`.
+ */
+export async function startOllamaServer(timeoutSec = 10): Promise<boolean> {
+  if (await ollamaProvider.ping()) return true;
+  if (!commandExists("ollama")) return false;
+  const detached = process.platform !== "win32";
+  // Fire-and-forget. We do not await — we poll for readiness below.
+  void execAsync("ollama", ["serve"], { ...(detached ? { env: process.env } : {}) });
+  for (let i = 0; i < timeoutSec; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    if (await ollamaProvider.ping()) return true;
+  }
+  return false;
 }
 
 export const ollamaProvider: Provider = {
@@ -45,7 +63,17 @@ export const ollamaProvider: Provider = {
     }
   },
 
-  async generate(_prompt: string): Promise<string> {
-    throw new Error("ollama provider: generate() not yet ported (Phase 2)");
+  async generate(prompt: string): Promise<string> {
+    const payload = JSON.stringify({ model: MODEL(), prompt, stream: false });
+    const r = await fetch(`${HOST()}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    });
+    if (!r.ok) {
+      throw new Error(`ollama generate failed: HTTP ${r.status}`);
+    }
+    const data = (await r.json()) as { response?: string };
+    return data.response ?? "";
   },
 };
