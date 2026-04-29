@@ -1,10 +1,11 @@
 ---
 id: PRD-001
 type: PRD
-status: in-progress
+status: done
 proposed-by: chevp
 approved-by: chevp
 approved-at: 2026-04-29
+completed-at: 2026-04-29
 supersedes: —
 implements: che-cli parity
 evidence:

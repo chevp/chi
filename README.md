@@ -66,22 +66,39 @@ chi/
 │   ├── chi              # node shim → dist/index.js
 │   └── chi.cmd          # Windows shim
 ├── src/
-│   ├── index.ts         # dispatcher (hand-rolled arg routing)
+│   ├── index.ts         # dispatcher (workflow trigger lookup → built-ins)
 │   ├── platform.ts      # OS detection (darwin/windows/wsl/linux)
 │   ├── ui.ts            # ANSI colors + section/kv printers
 │   ├── config.ts        # ~/.chi/config loader (env-var precedence)
+│   ├── spawn.ts         # child_process helpers (sync/async, inherit-stdio)
+│   ├── prompt.ts        # readline / yes-no helpers (TTY-aware)
+│   ├── spinner.ts       # braille spinner (TTY-only, silent in CI)
+│   ├── frontmatter.ts   # YAML frontmatter parser (status/progress badges)
+│   ├── yaml.ts          # minimal YAML parser for workflow files
 │   ├── git/
-│   │   └── index.ts     # git wrappers (porcelain, ahead/behind, etc.)
+│   │   └── index.ts     # git wrappers + push-with-recovery + error log
 │   ├── provider/
 │   │   ├── types.ts     # Provider interface
-│   │   ├── index.ts     # provider router
+│   │   ├── index.ts     # router + smart-generate (escalation to claude-code)
 │   │   ├── claude-code.ts
 │   │   ├── copilot.ts
 │   │   └── ollama.ts
+│   ├── workflow/
+│   │   └── loader.ts    # workflow discovery + validation + step planning
 │   └── commands/
 │       ├── help.ts
-│       ├── status.ts    # ✓ ported
-│       └── stub.ts      # placeholder for un-ported commands
+│       ├── status.ts
+│       ├── commit.ts
+│       ├── ship.ts
+│       ├── flow.ts
+│       ├── done.ts
+│       ├── issue.ts
+│       ├── explain.ts
+│       ├── init.ts
+│       ├── reinstall.ts
+│       ├── config.ts
+│       ├── doctor.ts
+│       └── workflow.ts  # list / show / run sub-dispatcher (also: chi run)
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -95,30 +112,39 @@ whichever is selected by `CHI_PROVIDER`.
 
 Mapping from che-cli (shell) → chi (TS):
 
-| che-cli                              | chi                          | Status |
-|--------------------------------------|------------------------------|--------|
-| `lib/che/platform.sh`                | `src/platform.ts`            | ✓ done |
-| `lib/che/config_load.sh`             | `src/config.ts`              | ✓ done |
-| `lib/che/provider.sh`                | `src/provider/index.ts`      | ✓ done (interface + router; generators are Phase 2) |
-| `lib/che/ollama/client.sh`           | `src/provider/ollama.ts`     | partial (ping + hasModel; generate Phase 2) |
-| `lib/che/claude-code/client.sh`      | `src/provider/claude-code.ts`| partial (ping; generate Phase 2) |
-| `lib/che/copilot/client.sh`          | `src/provider/copilot.ts`    | partial (ping; generate Phase 2) |
-| `lib/che/status.sh`                  | `src/commands/status.ts`     | ✓ done (core sections; submodules/issues/PRs/plans Phase 2) |
-| `lib/che/git/commit.sh`              | `src/commands/commit.ts`     | stub   |
-| `lib/che/git/ship.sh`                | `src/commands/ship.ts`       | stub   |
-| `lib/che/git/flow.sh`                | `src/commands/flow.ts`       | stub   |
-| `lib/che/git/done.sh`                | `src/commands/done.ts`       | stub   |
-| `lib/che/issue.sh`                   | `src/commands/issue.ts`      | stub   |
-| `lib/che/explain.sh`                 | `src/commands/explain.ts`    | stub   |
-| `lib/che/init.sh`                    | `src/commands/init.ts`       | stub   |
-| `lib/che/workflow.sh` + workflow/    | `src/commands/workflow.ts`   | stub   |
-| `lib/che/reinstall.sh`               | `src/commands/reinstall.ts`  | stub   |
-| `lib/che/config.sh`                  | `src/commands/config.ts`     | stub   |
-| `lib/che/doctor.sh`                  | `src/commands/doctor.ts`     | stub   |
-| `lib/che/frontmatter.sh`             | `src/frontmatter.ts`         | not started |
-| `lib/che/json.sh`                    | (replaced by native JSON)    | n/a    |
-| `lib/che/ui.sh`                      | `src/ui.ts`                  | ✓ done (subset) |
-| `install.sh` / `install.ps1`         | `installer/`                 | not started |
+| che-cli                              | chi                                  | Status      |
+|--------------------------------------|--------------------------------------|-------------|
+| `lib/che/platform.sh`                | `src/platform.ts`                    | ✓ done      |
+| `lib/che/config_load.sh`             | `src/config.ts`                      | ✓ done      |
+| `lib/che/provider.sh`                | `src/provider/index.ts`              | ✓ done      |
+| `lib/che/ollama/client.sh`           | `src/provider/ollama.ts`             | ✓ done      |
+| `lib/che/claude-code/client.sh`      | `src/provider/claude-code.ts`        | ✓ done      |
+| `lib/che/copilot/client.sh`          | `src/provider/copilot.ts`            | ✓ done      |
+| `lib/che/status.sh`                  | `src/commands/status.ts`             | ✓ done      |
+| `lib/che/git/commit.sh`              | `src/commands/commit.ts`             | ✓ done      |
+| `lib/che/git/ship.sh`                | `src/commands/ship.ts`               | ✓ done      |
+| `lib/che/git/flow.sh`                | `src/commands/flow.ts`               | ✓ done      |
+| `lib/che/git/done.sh`                | `src/commands/done.ts`               | ✓ done      |
+| `lib/che/git/push.sh`                | `src/git/index.ts` (`pushWithRecovery`) | ✓ done   |
+| `lib/che/git/conflicts.sh`           | —                                    | not ported (see PROP) |
+| `lib/che/git/warnings.sh`            | —                                    | not ported (see PROP) |
+| `lib/che/issue.sh`                   | `src/commands/issue.ts`              | ✓ done      |
+| `lib/che/explain.sh`                 | `src/commands/explain.ts`            | ✓ done      |
+| `lib/che/init.sh`                    | `src/commands/init.ts`               | ✓ done      |
+| `lib/che/workflow.sh` + workflow/    | `src/commands/workflow.ts`, `src/workflow/loader.ts` | ✓ done |
+| `lib/che/reinstall.sh`               | `src/commands/reinstall.ts`          | ✓ done      |
+| `lib/che/config.sh`                  | `src/commands/config.ts`             | ✓ done      |
+| `lib/che/doctor.sh`                  | `src/commands/doctor.ts`             | ✓ done      |
+| `lib/che/frontmatter.sh`             | `src/frontmatter.ts`                 | ✓ done      |
+| `lib/che/json.sh`                    | (replaced by native `JSON.*`)        | n/a         |
+| `lib/che/ui.sh`                      | `src/ui.ts` + `src/spinner.ts`       | ✓ done      |
+| `lib/che/workflow/yaml_get.py`       | `src/yaml.ts` (in-tree YAML parser)  | ✓ done      |
+| `install.sh` / `install.ps1`         | `installer/`                         | not started (PROP-001) |
+| `self_update.sh`                     | —                                    | not ported (PROP-002) |
+
+Conflict resolution (`conflicts.sh`) and the LLM warning fixer (`warnings.sh`)
+in `chi ship` are intentionally deferred — they wrap interactive `claude`
+invocations and need careful UX work; tracked as proposals.
 
 ## Why "chi"?
 

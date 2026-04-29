@@ -13,7 +13,7 @@ Reads, greps and explanations are always free. Before you **create, edit or dele
 
 `chi` is a Node.js / TypeScript port of [che-cli](https://github.com/chevp/che-cli) — a small developer CLI that wraps git workflows and AI provider calls (Claude Code, Copilot, Ollama). Same UX as `che`, no runtime dependencies, hand-rolled command dispatch.
 
-Status: Phase 1 — `chi status` works end-to-end; other commands are stubs. See [README.md](README.md) for the full porting matrix.
+Status: Full command-set ported (status, commit, ship, flow, done, issue, explain, init, reinstall, config, doctor, workflow, run). Deferred work tracked as `PROP-NNN` proposals under [context/plans/proposals/](context/plans/proposals/) — see [README.md](README.md) for the full porting matrix.
 
 ## Architecture
 
