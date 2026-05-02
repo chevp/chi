@@ -3,6 +3,7 @@ id: ADR-004
 type: ADR
 status: accepted
 proposed-by: ai
+proposed-at: 2026-05-02
 decided-by: chevp
 approved-by: chevp
 approved-at: 2026-05-02
@@ -16,7 +17,7 @@ Accepted.
 
 ## Context
 
-PRD-002 introduces workspace-aware behavior to `chi ship`: when invoked from a
+PROP-006 (which will promote to PRD-002) introduces workspace-aware behavior to `chi ship`: when invoked from a
 directory **without** `.git`, the command treats the cwd as a root containing
 many sibling git repos and ships them all. This requires four new patterns
 not previously needed in chi:
@@ -216,6 +217,13 @@ contract. Conflating them would force one to compromise.
 - **Manifest drift**: a repo renamed on GitHub leaves a stale slug in the
   manifest. Mitigation: doctor flags slugs that resolve neither to a local
   dir nor a GitHub repo.
+- **Slug-URL normalization**: `remote.origin.url` appears in at least three
+  forms in the wild — SSH (`git@github.com:owner/repo.git`), HTTPS
+  (`https://github.com/owner/repo.git`), and GHE/custom-port
+  (`ssh://git@host:port/owner/repo`). Without an explicit `normalizeSlug(url)`
+  step, derived slugs will mismatch manifest keys for some repos.
+  Mitigation: implement a normalizer that strips protocol, auth prefix,
+  optional port, and `.git` suffix before slug comparison.
 - **Concurrency contention** on git's index lock is *not* a risk — each repo
   has its own `.git/index`. `gh` API rate limits are real; the GraphQL batch
   step keeps requests well below limits.
