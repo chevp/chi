@@ -123,6 +123,52 @@ function isClean(worktreePath: string): boolean {
   return r.ok && r.stdout.trim() === "";
 }
 
+export interface ActiveChiFlow {
+  worktreePath: string;
+  /** Contents of <per-worktree-gitdir>/chi-flow (branch=, base=, pr=, issue=). */
+  flow: { branch: string; base: string; pr: string; issue: string };
+  meta: ChiWorktreeMeta;
+}
+
+/**
+ * Returns chi-managed worktrees that have an active chi-flow marker. Used by
+ * `chi ship` (clean source repo) to point the user at parallel work that
+ * needs shipping from elsewhere.
+ */
+export function listActiveChiFlows(): ActiveChiFlow[] {
+  if (!isInsideRepo()) return [];
+  const common = commonGitDir();
+  if (!common) return [];
+  const out: ActiveChiFlow[] = [];
+  for (const w of listAllWorktrees()) {
+    const mp = markerPath(w.path, common);
+    if (!existsSync(mp)) continue;
+    const meta = readMarker(mp);
+    if (!meta) continue;
+    const wtGitDir = `${common}/worktrees/${basename(w.path)}`;
+    const flowPath = `${wtGitDir}/chi-flow`;
+    if (!existsSync(flowPath)) continue;
+    const flow = { branch: "", base: "", pr: "", issue: "" };
+    try {
+      const raw = readFileSync(flowPath, "utf8");
+      for (const ln of raw.split(/\r?\n/)) {
+        const eq = ln.indexOf("=");
+        if (eq < 0) continue;
+        const k = ln.slice(0, eq).trim();
+        const v = ln.slice(eq + 1).trim();
+        if (k === "branch") flow.branch = v;
+        else if (k === "base") flow.base = v;
+        else if (k === "pr") flow.pr = v;
+        else if (k === "issue") flow.issue = v;
+      }
+    } catch {
+      continue;
+    }
+    out.push({ worktreePath: w.path, flow, meta });
+  }
+  return out;
+}
+
 /**
  * Returns metadata when cwd is inside a chi-managed worktree (not the main
  * repo). Used by `chi done` to detect worktree-aware cleanup paths.

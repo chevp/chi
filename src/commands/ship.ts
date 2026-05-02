@@ -3,8 +3,10 @@ import { existsSync, appendFileSync } from "node:fs";
 import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
+import { c } from "../ui.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
+import { listActiveChiFlows } from "./work.js";
 
 const HELP = `chi ship — for this repo and every submodule (recursively):
   init if missing, fast-forward pull if on a branch, then add + commit + push.
@@ -236,6 +238,19 @@ export async function run(argv: string[]): Promise<number> {
   const dirty = git(["-C", repoRoot, "status", "--porcelain"]).stdout.trim();
   if (!dirty) {
     process.stdout.write(`${basename(repoRoot)}: clean\n`);
+    // Worktree-aware hint: if the source repo is clean but a chi-managed
+    // worktree has an active flow, the user probably ran ship from the wrong
+    // directory. Point them at it. (This is the common pitfall after
+    // `chi issue fix N` — claude's work lives in ../<repo>-issue-N.)
+    const flows = listActiveChiFlows();
+    if (flows.length > 0) {
+      process.stdout.write(`\n${c.yellow("note:")} active flow(s) in chi-managed worktree(s):\n`);
+      for (const f of flows) {
+        const tag = f.flow.issue ? ` (issue #${f.flow.issue})` : "";
+        process.stdout.write(`  ${c.cyan(f.flow.branch)}${tag}\n`);
+        process.stdout.write(`    ${c.dim("→")} cd ${f.worktreePath} && chi ship\n`);
+      }
+    }
     return 0;
   }
 

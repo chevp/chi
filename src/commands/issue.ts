@@ -12,8 +12,9 @@ import { commandExists, execSync, execInherit } from "../spawn.js";
 import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
-import { readLine } from "../prompt.js";
+import { readLine, confirmYesNo } from "../prompt.js";
 import * as workflowCmd from "./workflow.js";
+import * as shipCmd from "./ship.js";
 import { createWorktree } from "./work.js";
 
 const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
@@ -632,12 +633,34 @@ Examples:
     return code;
   }
 
-  // Claude has exited cleanly. The worktree is sitting at <wt.path> with a
-  // chi-flow marker that records branch + issue. ship/done need to run from
-  // there — chi process here lives in the source repo, so just print the
-  // next steps for the user.
-  process.stdout.write("\n── claude session ended ──\n");
-  process.stdout.write(`worktree: ${wt.path}\n`);
+  // Claude has exited cleanly. ship/done must run from inside the worktree
+  // (the chi-flow marker is per-worktree). Offer to chain `chi ship` here by
+  // chdir-ing the chi process into the worktree before invoking it — saves
+  // the user a manual `cd` and avoids the "ran chi ship from source, got
+  // 'clean'" pitfall. `chi done` stays manual: the user typically wants CI
+  // / review to settle before merging, and `chi done` removes the worktree.
+  process.stdout.write(`\n${c.bold("── claude session ended ──")}\n`);
+  process.stdout.write(`worktree: ${c.cyan(wt.path)}\n\n`);
+
+  const wtDirty = git(["status", "--porcelain"], wt.path).stdout.trim() !== "";
+  const wtAhead = git(["rev-list", "--count", `main..${branch}`], wt.path).stdout.trim();
+  const hasWork = wtDirty || (wtAhead !== "" && wtAhead !== "0");
+
+  if (hasWork && (await confirmYesNo(`run 'chi ship' inside the worktree now? [Y/n] `))) {
+    process.chdir(wt.path);
+    const shipRc = await shipCmd.run([]);
+    if (shipRc !== 0) {
+      process.stderr.write(
+        `\nchi issue fix: ship returned ${shipRc} — fix the issue, then run from ${wt.path}\n`,
+      );
+      return shipRc;
+    }
+    process.stdout.write(
+      `\nnext: ${c.cyan(`cd ${wt.path} && chi done`)}   # after CI / review\n`,
+    );
+    return 0;
+  }
+
   process.stdout.write("next steps:\n");
   process.stdout.write(`  cd ${wt.path}\n`);
   process.stdout.write("  chi ship    # commit + push, opens draft PR\n");
