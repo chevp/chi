@@ -22,3 +22,5 @@ Event types: `gate-pass`, `gate-block`, `gate-override`, `adr-accepted`, `adr-su
 2026-05-02 | chevp | adr-accepted | ADR-004 | Workspace discovery + manifest format + concurrency primitive + provider call serialization for PRD-002.
 2026-05-02 | chevp | gate-pass | G2/PRD-002 | H1 PASS (1.6s warm, 4.7s cold @ 205 repos, 5.85x speedup, conc=8 sweet spot), H2 PASS (12 repos in 1 GraphQL call @ 1.2s); H3 deferred to G3 fault-injection. Evidence: insights-PRD-002.md.
 2026-05-02 | chevp | plan-approved | PRD-002-workspace-ship | Production approved; auto-detect workspace mode for chi ship, parallel triage + serial-with-progress push + provider single-slot queue.
+2026-05-02 | chevp | gate-pass | G3 | PRD-002 production complete: tsc clean, workspace discovery + concurrency pool + provider semaphore landed via PR #6. Issue #1 closed.
+2026-05-02 | chevp | plan-completed | PRD-002-workspace-ship | Implemented in PR #6 (merged); plan moved to finished/. Issue #1 (chevp/chi#1) closed with reference.
