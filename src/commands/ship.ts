@@ -2,6 +2,7 @@ import { basename, join } from "node:path";
 import { existsSync, appendFileSync } from "node:fs";
 import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
+import { resolveConflicts, finalizeRebase } from "../conflict.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
 
@@ -97,18 +98,10 @@ export async function run(argv: string[]): Promise<number> {
         const inRebase =
           existsSync(join(innerDir, "rebase-merge")) || existsSync(join(innerDir, "rebase-apply"));
         if (inRebase) {
-          // chi does not currently auto-resolve via claude — surface the conflicts and abort.
-          process.stderr.write(
-            `chi ship: rebase produced conflicts in ${basename(
-              repoRoot,
-            )} — resolve manually and retry (chi does not yet wrap claude for conflict resolution)\n`,
-          );
-          const conflicts = git(
-            ["-C", repoRoot, "diff", "--name-only", "--diff-filter=U"],
-          ).stdout.trim();
-          if (conflicts) process.stderr.write(`conflicting files:\n${conflicts}\n`);
-          git(["-C", repoRoot, "rebase", "--abort"]);
-          return 1;
+          const result = await resolveConflicts(repoRoot);
+          const rc = finalizeRebase(repoRoot, result);
+          if (rc !== 0) return rc;
+          // Rebase succeeded after resolution — continue with ship
         }
         process.stderr.write(
           `chi ship: pull failed in ${basename(repoRoot)} — resolve manually and retry\n`,
@@ -143,7 +136,7 @@ export async function run(argv: string[]): Promise<number> {
     const commitRc = await commitRun(["--yes"]);
     if (commitRc !== 0) return commitRc;
 
-    const pushRc = pushWithRecovery({ args: ["-u", "origin", m.branch] });
+    const pushRc = await pushWithRecovery({ args: ["-u", "origin", m.branch] });
     if (pushRc !== 0) return pushRc;
 
     if (!m.pr) {
