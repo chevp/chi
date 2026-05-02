@@ -15,3 +15,13 @@ Naming:
 - `EXP-NNN-<title>.md` — Exploration phase plan
 - `PRD-NNN-<title>.md` — Production phase plan
 - `PROP-NNN-<title>.md` — Out-of-scope proposal awaiting triage
+
+## Plans vs. GitHub issues
+
+Plans and GitHub issues serve different roles and one does not replace the other:
+
+- **Plans (this folder) are the source of truth for *design and decisions*.** They live in-repo, are diff-able, are referenced from ADRs and commits, and progress through the chevp-ai-framework gates (Context → Exploration → Production).
+- **GitHub issues track the *continuous execution* of those plans.** Each non-trivial issue should reference the plan it advances (e.g. `plan: PROP-NNN-...`). The plan owns the *why* and the *what*; the issue owns the *when* and the *who*.
+- **Challenger agents (or humans) initiate *new* plans by opening an issue first.** The issue captures the problem signal; if it is accepted, a `PROP-NNN` is drafted in [proposals/](proposals/) and the issue's body is updated to point at it. Issues without an underlying plan should stay narrow (bug reports, polish tasks, ADR fixups) — anything design-shaped is promoted to a plan.
+
+Rule of thumb: if you cannot describe a piece of work as "advances `PROP/CTX/EXP/PRD-NNN` toward its next gate" or "narrow bug/polish on existing code", it likely needs a plan before it needs an issue.
