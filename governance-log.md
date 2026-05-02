@@ -19,3 +19,6 @@ Event types: `gate-pass`, `gate-block`, `gate-override`, `adr-accepted`, `adr-su
 2026-05-02 | chevp | gate-pass | G1 | PROP-006 context complete: H1-H3 with test+kill criterion, R1-R3 expensive risks with mitigations (R4 mitigated by design), ADR-004 scope sketched; status moved to exploration.
 2026-05-02 | chevp | gate-pass | G1 | PROP-008 context complete: H1-H3 with kill criteria, R1-R4 with mitigations, hybrid architecture (workflow YAML + thin TS subcommand) chosen via AskUserQuestion; no new ADR (zero new runtime deps).
 2026-05-02 | chevp | plan-approved | PROP-008 | Implementation: .che/workflows/issue-fix.yml + .che/scripts/issue-fix.sh + cmdFix in src/commands/issue.ts. Endpoint: code-change only, manual chi ship/done.
+2026-05-02 | chevp | adr-accepted | ADR-004 | Workspace discovery + manifest format + concurrency primitive + provider call serialization for PRD-002.
+2026-05-02 | chevp | gate-pass | G2/PRD-002 | H1 PASS (1.6s warm, 4.7s cold @ 205 repos, 5.85x speedup, conc=8 sweet spot), H2 PASS (12 repos in 1 GraphQL call @ 1.2s); H3 deferred to G3 fault-injection. Evidence: insights-PRD-002.md.
+2026-05-02 | chevp | plan-approved | PRD-002-workspace-ship | Production approved; auto-detect workspace mode for chi ship, parallel triage + serial-with-progress push + provider single-slot queue.

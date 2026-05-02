@@ -1,12 +1,15 @@
 ---
 id: PRD-002
 type: PRD
-status: proposed
+status: production
 proposed-by: ai
 proposed-at: 2026-05-02
-decided-by: —
-approved-by: —
-approved-at: —
+g2-approved-by: chevp
+g2-approved-at: 2026-05-02
+g2-evidence: insights-PRD-002.md (H1 PASS, H2 PASS, H3 deferred to G3)
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-02
 supersedes: —
 implements: PROP-006
 depends-on: ADR-004

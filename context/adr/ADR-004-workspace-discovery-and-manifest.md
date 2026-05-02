@@ -1,18 +1,18 @@
 ---
 id: ADR-004
 type: ADR
-status: proposed
+status: accepted
 proposed-by: ai
-decided-by: —
-approved-by: —
-approved-at: —
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-02
 supersedes: —
 ---
 
 # ADR-004: Workspace Discovery, Manifest Format, Concurrency, and Provider Serialization
 
 ## Status
-Proposed.
+Accepted.
 
 ## Context
 
