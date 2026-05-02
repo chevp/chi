@@ -10,13 +10,38 @@ Reads .git/chi-flow, then runs:
   gh pr merge <pr> --squash --auto --delete-branch
   git checkout <base> && git pull --ff-only && git remote prune origin
 
+Options:
+  --issue <n>   close GitHub issue #n after merge (overrides marker;
+                useful when the flow was started via 'chi flow' rather
+                than 'chi issue fix')
+  -h, --help    show this help
+
 Aborts if there's no active flow, or no PR yet (run 'chi ship' first).
 `;
 
 export async function run(argv: string[]): Promise<number> {
-  if (argv[0] === "-h" || argv[0] === "--help") {
-    process.stdout.write(HELP);
-    return 0;
+  let issueOverride = "";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] ?? "";
+    if (a === "-h" || a === "--help") {
+      process.stdout.write(HELP);
+      return 0;
+    }
+    if (a === "--issue") {
+      const v = argv[++i];
+      if (!v) {
+        process.stderr.write("chi done: --issue needs a value\n");
+        return 1;
+      }
+      if (!/^\d+$/.test(v)) {
+        process.stderr.write(`chi done: --issue '${v}' is not a valid issue number\n`);
+        return 1;
+      }
+      issueOverride = v;
+      continue;
+    }
+    process.stderr.write(`chi done: unknown option '${a}'\n`);
+    return 1;
   }
 
   for (const bin of ["git", "gh"]) {
@@ -105,8 +130,9 @@ export async function run(argv: string[]): Promise<number> {
   // parser handles this asynchronously, but in direct-merge mode the issue
   // closes only if the PR body had the keyword — call gh as a safety net.
   // Idempotent: closing an already-closed issue exits non-zero, which we ignore.
-  if (m.issue) {
-    execSync("gh", ["issue", "close", m.issue, "--reason", "completed"]);
+  const issueToClose = issueOverride || m.issue;
+  if (issueToClose) {
+    execSync("gh", ["issue", "close", issueToClose, "--reason", "completed"]);
   }
 
   try {
