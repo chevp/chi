@@ -4,7 +4,7 @@ import {
   activeProviderName,
   getProvider,
 } from "../provider/index.js";
-import { commandExists, execSync } from "../spawn.js";
+import { commandExists, execAsync, execSync } from "../spawn.js";
 import { ollamaProvider, startOllamaServer } from "../provider/ollama.js";
 
 const HELP = `chi doctor — verify dependencies and external services.
@@ -135,7 +135,7 @@ function dockerStartHint(): void {
   }
 }
 
-function dockerCheck(): boolean {
+async function dockerCheck(): Promise<boolean> {
   if (!commandExists("docker")) {
     fail("docker not installed");
     dockerInstallHint();
@@ -143,11 +143,20 @@ function dockerCheck(): boolean {
   }
   const ver = execSync("docker", ["--version"]).stdout.trim().split(/\s+/)[2]?.replace(/,$/, "") ?? "?";
   ok(`docker installed (${ver})`);
-  if (execSync("docker", ["info"]).ok) {
+  // `docker info` blocks indefinitely when the daemon socket is reachable but
+  // unresponsive (Docker Desktop launching, stuck VM). spawnSync's timeout
+  // sends SIGTERM which docker can ignore, so use execAsync — its timeout
+  // escalates to SIGKILL.
+  const probe = await execAsync("docker", ["info"], { timeoutMs: 5000 });
+  if (probe.ok) {
     ok("docker daemon is running");
     return true;
   }
-  fail("docker daemon not running");
+  if (probe.status === null) {
+    fail("docker daemon not responding (timed out after 5s)");
+  } else {
+    fail("docker daemon not running");
+  }
   dockerStartHint();
   return false;
 }

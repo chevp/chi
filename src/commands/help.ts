@@ -9,8 +9,10 @@ Commands:
                       in flow mode: push -u + open/update draft PR
   flow <branch>       start a flow branch (pull base, checkout new, mark repo)
   done                finish active flow: gh pr merge --squash --auto, back to base
-  issue [sub] [args]  open / list / close GitHub issues (AI-drafted body);
-                      'chi issue [text]' is shorthand for 'chi issue create [text]'
+  issue [sub] [args]  open / list / close / fix GitHub issues (AI-drafted body);
+                      'chi issue [text]' is shorthand for 'chi issue create [text]';
+                      'chi issue fix <n> [hint]' cuts a fix branch + starts a
+                      framework-driven Claude session (CTX → EXP → PRD)
   explain [question]  ask the active LLM to diagnose the last chi ship/commit failure
                       (read-only — prints a suggested command, never executes)
   init                provision local ollama (verify binary, start server, pull model)
