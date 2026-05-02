@@ -7,6 +7,7 @@ import { c } from "../ui.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
 import { listActiveChiFlows } from "./work.js";
+import { checkForUpdate } from "../self-update.js";
 
 const HELP = `chi ship — for this repo and every submodule (recursively):
   init if missing, fast-forward pull if on a branch, then add + commit + push.
@@ -69,7 +70,10 @@ export async function run(argv: string[]): Promise<number> {
         process.stdout.write(`chi ship: ${smPath} is in detached HEAD, skipping pull\n`);
       }
 
-      const subRc = await execInherit(process.execPath, [SELF_BIN, "ship"], { cwd: smAbs });
+      const subRc = await execInherit(process.execPath, [SELF_BIN, "ship"], {
+        cwd: smAbs,
+        env: { ...process.env, __CHI_NESTED: "1" },
+      });
       if (subRc !== 0) {
         failed.push(`${smPath} (ship failed)`);
         process.stderr.write(`chi ship: ship failed in '${smPath}' (continuing)\n`);
@@ -147,6 +151,7 @@ export async function run(argv: string[]): Promise<number> {
         process.stderr.write(
           `chi ship: no commits on '${m.branch}' beyond '${base}' yet — skipping PR creation\n`,
         );
+        checkForUpdate();
         return 0;
       }
       const createArgs = ["pr", "create", "--draft", "--base", base, "--head", m.branch];
@@ -187,6 +192,7 @@ export async function run(argv: string[]): Promise<number> {
     } else {
       process.stdout.write(`\n→ updated PR #${m.pr}\n`);
     }
+    checkForUpdate();
     return 0;
   }
 
@@ -251,14 +257,19 @@ export async function run(argv: string[]): Promise<number> {
         process.stdout.write(`    ${c.dim("→")} cd ${f.worktreePath} && chi ship\n`);
       }
     }
+    checkForUpdate();
     return 0;
   }
 
   process.stdout.write(`\n── repo: ${basename(repoRoot)} ──\n`);
 
+  let rc: number;
   if (git(["-C", repoRoot, "symbolic-ref", "-q", "HEAD"]).ok) {
-    return commitRun(["--push", "--yes"]);
+    rc = await commitRun(["--push", "--yes"]);
+  } else {
+    process.stdout.write("chi ship: still in detached HEAD, committing without push\n");
+    rc = await commitRun(["--yes"]);
   }
-  process.stdout.write("chi ship: still in detached HEAD, committing without push\n");
-  return commitRun(["--yes"]);
+  if (rc === 0) checkForUpdate();
+  return rc;
 }
