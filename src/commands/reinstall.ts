@@ -66,7 +66,7 @@ export async function run(argv: string[]): Promise<number> {
 
   process.stderr.write(
     `chi reinstall: no scripts/reinstall.sh found in ${process.cwd()}${
-      gitRoot ? ` or ${gitRoot}` : ""
+      gitRoot && gitRoot !== process.cwd() ? ` or ${gitRoot}` : ""
     }\n` +
       "Convention: each repo provides its own scripts/reinstall.sh.\n",
   );
