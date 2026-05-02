@@ -493,7 +493,8 @@ Pre-flight requirements:
   - gh installed and authenticated
   - inside a git repository, not in an active flow (no .git/chi-flow marker)
   - CHI_PROVIDER=claude-code (default), claude CLI on PATH
-  - .che/workflows/issue-fix.yml resolvable above cwd
+  - issue-fix workflow resolvable (per-repo override at .che/workflows/issue-fix.yml,
+    or chi's built-in bundled with the CLI)
 
 Examples:
   chi issue fix 42

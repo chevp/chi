@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import { basename, parse } from "node:path";
+import { basename, isAbsolute, join, parse } from "node:path";
 import { c } from "../ui.js";
 import {
   createInputs,
@@ -225,20 +225,28 @@ Options:
   })();
 
   process.stdout.write(`${c.bold(`── workflow: ${wfName} ──`)}\n`);
-  process.stdout.write(`${c.dim("root")} ${resolved.root}\n`);
+  process.stdout.write(`${c.dim("root")} ${resolved.root}${resolved.builtin ? c.dim("  (built-in)") : ""}\n`);
 
-  process.chdir(resolved.root);
+  // Per-repo workflows expect to run from their root (script paths are relative
+  // to .che/). Built-in fallbacks must NOT chdir — the script (e.g. issue-fix.sh)
+  // calls `chi flow` which has to operate on the user's repo, not chi's bundle.
+  if (!resolved.builtin) {
+    process.chdir(resolved.root);
+  }
 
   for (let i = 0; i < plan.length; i++) {
     const s = plan[i]!;
+    const scriptPath = resolved.builtin && !isAbsolute(s.script)
+      ? join(resolved.root, s.script)
+      : s.script;
     process.stdout.write(`\n${c.bold(`▶ [${i + 1}/${plan.length}] ${s.name}`)}\n`);
-    process.stdout.write(`${c.dim(`  ${s.script}${s.args.length ? " " + s.args.map(quoteArg).join(" ") : ""}`)}\n`);
+    process.stdout.write(`${c.dim(`  ${scriptPath}${s.args.length ? " " + s.args.map(quoteArg).join(" ") : ""}`)}\n`);
     if (parsed.dry) continue;
-    if (!existsSync(s.script)) {
-      process.stderr.write(`${c.red(`  ✗ script not found: ${s.script}`)}\n`);
+    if (!existsSync(scriptPath)) {
+      process.stderr.write(`${c.red(`  ✗ script not found: ${scriptPath}`)}\n`);
       return 1;
     }
-    const code = await execInherit("bash", [s.script, ...s.args]);
+    const code = await execInherit("bash", [scriptPath, ...s.args]);
     if (code !== 0) {
       process.stderr.write(`${c.red(`  ✗ ${s.name} (exit ${code})`)}\n`);
       return code;

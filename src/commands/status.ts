@@ -6,6 +6,7 @@ import { activeProviderName, getProvider } from "../provider/index.js";
 import {
   aheadBehind,
   currentBranch,
+  git,
   isInsideRepo,
   porcelain,
   recentCommits,
@@ -43,7 +44,7 @@ interface PrRow {
   author: string;
 }
 
-async function fetchGhIssues(timeoutSec: number): Promise<IssueRow[] | null> {
+async function fetchGhIssues(timeoutSec: number, cwd?: string): Promise<IssueRow[] | null> {
   const r = execSync(
     "gh",
     [
@@ -58,7 +59,7 @@ async function fetchGhIssues(timeoutSec: number): Promise<IssueRow[] | null> {
       "--jq",
       '.[] | "\\(.number)\\t\\(.title)\\t\\([.labels[].name]|join(","))\\t\\([.assignees[].login]|join(","))\\t\\(.body|@base64)"',
     ],
-    { timeoutMs: timeoutSec * 1000 },
+    { timeoutMs: timeoutSec * 1000, cwd },
   );
   if (!r.ok) return null;
   const out: IssueRow[] = [];
@@ -84,7 +85,7 @@ async function fetchGhIssues(timeoutSec: number): Promise<IssueRow[] | null> {
   return out;
 }
 
-async function fetchGhPrs(timeoutSec: number): Promise<PrRow[] | null> {
+async function fetchGhPrs(timeoutSec: number, cwd?: string): Promise<PrRow[] | null> {
   const r = execSync(
     "gh",
     [
@@ -99,7 +100,7 @@ async function fetchGhPrs(timeoutSec: number): Promise<PrRow[] | null> {
       "--jq",
       '.[] | "\\(.number)\\t\\(.title)\\t\\(.isDraft)\\t\\(.headRefName)\\t\\(.reviewDecision // "")\\t\\(.author.login)"',
     ],
-    { timeoutMs: timeoutSec * 1000 },
+    { timeoutMs: timeoutSec * 1000, cwd },
   );
   if (!r.ok) return null;
   const out: PrRow[] = [];
@@ -132,6 +133,138 @@ function prStateTag(row: PrRow): string {
     default:
       return c.dim(row.review);
   }
+}
+
+const MAX_GLOBAL_REPOS = 10;
+
+/** Scan immediate children of `dir` for git repositories (up to MAX_GLOBAL_REPOS). */
+function discoverRepos(dir: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const repos: string[] = [];
+  for (const entry of entries.sort()) {
+    if (entry.startsWith(".")) continue;
+    const full = join(dir, entry);
+    try {
+      if (!statSync(full).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (existsSync(join(full, ".git"))) {
+      repos.push(full);
+      if (repos.length >= MAX_GLOBAL_REPOS) break;
+    }
+  }
+  return repos;
+}
+
+async function globalStatus(short: boolean): Promise<number> {
+  const cwd = process.cwd();
+  const repos = discoverRepos(cwd);
+
+  section("global overview");
+  process.stdout.write(`  ${c.dim(`(not inside a git repository — showing workspace summary)`)}\n`);
+
+  if (repos.length === 0) {
+    process.stdout.write(`  ${c.dim("no git repositories found in child directories")}\n`);
+    line();
+    return 0;
+  }
+
+  // ---- repositories with branch + state ------------------------------------
+  section("repositories");
+  for (const repo of repos) {
+    const name = basename(repo);
+    const branchR = git(["symbolic-ref", "--quiet", "--short", "HEAD"], repo);
+    const branch = branchR.ok ? branchR.stdout.trim() : "detached";
+    const st = git(["status", "--porcelain=v1"], repo);
+    const dirty = st.ok && st.stdout.trim().length > 0;
+    const state = dirty ? c.yellow("dirty") : c.green("clean");
+    process.stdout.write(`  ${c.cyan(name.padEnd(24))} ${branch.padEnd(20)} ${state}\n`);
+  }
+
+  if (short) {
+    line();
+    return 0;
+  }
+
+  // ---- recent commits per repo ---------------------------------------------
+  section("recent commits");
+  for (const repo of repos) {
+    const name = basename(repo);
+    const commits = recentCommits(3, repo);
+    if (commits.trim()) {
+      process.stdout.write(`  ${c.bold(name)}\n`);
+      process.stdout.write(`${commits}\n`);
+    }
+  }
+
+  // ---- GitHub: issues + PRs per repo ---------------------------------------
+  if (commandExists("gh") && execSync("gh", ["auth", "status"]).ok) {
+    const ghTimeout = Number.parseInt(process.env.CHI_GH_TIMEOUT ?? "3", 10) || 3;
+
+    const allIssues: Array<{ repo: string; rows: IssueRow[] }> = [];
+    const allPrs: Array<{ repo: string; rows: PrRow[] }> = [];
+
+    for (const repo of repos) {
+      const name = basename(repo);
+      // Only query repos that have a GitHub remote
+      const remote = git(["remote", "get-url", "origin"], repo);
+      if (!remote.ok || !remote.stdout.includes("github")) continue;
+
+      const [issues, prs] = await Promise.all([
+        fetchGhIssues(ghTimeout, repo),
+        fetchGhPrs(ghTimeout, repo),
+      ]);
+      if (issues && issues.length > 0) allIssues.push({ repo: name, rows: issues });
+      if (prs && prs.length > 0) allPrs.push({ repo: name, rows: prs });
+    }
+
+    section("issues");
+    if (allIssues.length > 0) {
+      for (const { repo: repoName, rows } of allIssues) {
+        process.stdout.write(`  ${c.bold(repoName)}\n`);
+        for (const row of rows) {
+          const fm = row.body
+            ? parseFrontmatter(row.body)
+            : { name: "", status: "", progress: "" };
+          const meta: string[] = [];
+          if (fm.progress) meta.push(c.dim(`(${fm.progress})`));
+          if (row.labels) meta.push(c.dim(`[${row.labels}]`));
+          if (row.assignees) meta.push(c.dim(`@${row.assignees}`));
+          process.stdout.write(
+            `    ${c.cyan(`#${row.num}`)} ${statusBadge(fm.status).padEnd(11)} ${row.title}${
+              meta.length ? ` ${meta.join(" ")}` : ""
+            }\n`,
+          );
+        }
+      }
+    } else {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    }
+
+    section("pull requests");
+    if (allPrs.length > 0) {
+      for (const { repo: repoName, rows } of allPrs) {
+        process.stdout.write(`  ${c.bold(repoName)}\n`);
+        for (const row of rows) {
+          const tag = prStateTag(row);
+          process.stdout.write(
+            `    ${c.cyan(`#${row.num}`)} ${tag.padEnd(9)} ${row.title} ${c.dim(`(${row.head} by @${row.author})`)}\n`,
+          );
+        }
+      }
+    } else {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    }
+  }
+
+  line();
+  return 0;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -181,9 +314,7 @@ export async function run(argv: string[]): Promise<number> {
 
   // ---- git ----------------------------------------------------------------
   if (!isInsideRepo()) {
-    section("git");
-    process.stdout.write(`  ${c.dim("(not a git repository)")}\n\n`);
-    return 0;
+    return globalStatus(short);
   }
 
   const root = repoRoot();
