@@ -24,9 +24,29 @@ recent commits
   1a2b3c4 initial scaffold (1 minute ago)
 ```
 
-## Install (development)
+## Install
 
 Requires Node 20+.
+
+```sh
+git clone https://github.com/chevp/chi.git
+cd chi
+./install.sh        # macOS / Linux / WSL
+```
+
+On Windows (PowerShell):
+
+```powershell
+git clone https://github.com/chevp/chi.git
+cd chi
+.\install.ps1
+```
+
+Both scripts run `npm install && npm run build`, then wire `chi` onto your
+PATH. Pass `--help` (bash) or `-AssumeYes` (PowerShell) for unattended use.
+You can override the install prefix with `PREFIX=~/.local ./install.sh`.
+
+### Manual install
 
 ```sh
 git clone https://github.com/chevp/chi.git
@@ -34,9 +54,9 @@ cd chi
 npm install
 npm run build
 npm link        # makes `chi` available on PATH
-
-chi status
 ```
+
+### Development
 
 For iterative development without rebuilding:
 
@@ -140,7 +160,7 @@ Mapping from che-cli (shell) → chi (TS):
 | `lib/che/json.sh`                    | (replaced by native `JSON.*`)        | n/a         |
 | `lib/che/ui.sh`                      | `src/ui.ts` + `src/spinner.ts`       | ✓ done      |
 | `lib/che/workflow/yaml_get.py`       | `src/yaml.ts` (in-tree YAML parser)  | ✓ done      |
-| `install.sh` / `install.ps1`         | `installer/`                         | not started (PROP-001) |
+| `install.sh` / `install.ps1`         | `install.sh` / `install.ps1`         | ✓ done (PROP-001) |
 | `self_update.sh`                     | —                                    | not ported (PROP-002) |
 
 Conflict resolution (`conflicts.sh`) and the LLM warning fixer (`warnings.sh`)
