@@ -1,9 +1,29 @@
 ---
 id: PROP-006
 type: PROP
-status: open
+status: exploration
 proposed-by: ai
 proposed-at: 2026-05-02
+g1-approved-by: chevp
+g1-approved-at: 2026-05-02
+evidence-g1:
+  hypothesis: Auto-detect workspace mode + triage + parallelism + gh-graphql
+              batching collapse `chi ship` wall-clock from minutes to seconds
+              for the mostly-clean 200-repo case, and a manifest-driven
+              auto-clone closes the "exists on GitHub, missing locally"
+              drift loop.
+  result:     Three hypotheses formulated with concrete tests + kill criteria
+              (H1 wall-clock <10s, H2 graphql round-trips O(N/50), H3 auto-
+              clone failure rate <5%). Three expensive risks named with
+              mitigations (R1 partial-clone, R2 manifest-drift, R3 LLM
+              rate-limit). R4 (credential-prompt) resolved upstream via
+              serial-with-progress push decision. ADR-004 scope sketched
+              (discovery, manifest format, concurrency primitive, env gates).
+              Out-of-scope items recorded.
+  reasoning:  G1 requires problem framed + risks named + scope confirmed —
+              not yet code or prototypes. All three are present and
+              specific. Architectural questions are surfaced with plausible
+              answers, deferred to ADR-004 in Exploration.
 ---
 
 # PROP-006 — Workspace-aware `chi ship` (auto-detect, parallel, gh-batched)
@@ -54,8 +74,11 @@ Single-repo behavior (`.git` present in cwd) is unchanged.
   `defaultBranchRef.target.oid` + open PR head refs; replaces N×`git fetch`
   for the ahead-detection pass.
 - **Push phase serialization:** parallel `git push` can collide on credential
-  prompts. Mitigation: commit phase parallel, push phase serial-with-progress
-  (or fully parallel iff `GIT_TERMINAL_PROMPT=0` and SSH-only — gate on env).
+  prompts. **Decision (chevp, 2026-05-02):** commit phase parallel, push phase
+  **serial-with-progress** — predictable, no auth-prompt deadlock, progress
+  output stays readable. The fully-parallel SSH-only variant is rejected for
+  now; revisit only if push wall-clock becomes the dominant cost in
+  measurements.
 - **Behavior gates:**
   - `CHI_WORKSPACE_PARALLEL=N` (default 8)
   - `CHI_WORKSPACE_DEPTH=N` (default 3)
@@ -65,9 +88,76 @@ Single-repo behavior (`.git` present in cwd) is unchanged.
   - `chi status` workspace mode
   - `chi doctor` workspace mode (manifest validation, orphaned dirs)
   - Workspace-wide rebase/conflict handling (intersects PROP-003)
-- **Requires at `/promote` time:**
-  - ADR for workspace discovery + manifest format (new pattern)
-  - Challenger pass (Top-3 failure modes; auth-prompt deadlock + partial-clone
-    state + manifest drift are the obvious candidates)
-  - Kill criteria (e.g., "if wall-clock for 200 mostly-clean repos exceeds 10s
-    on the reference machine, redesign or abandon")
+
+## Hypotheses
+
+**H1 — Triage + parallelism collapses wall-clock for mostly-clean workspaces.**
+- Test: 200-repo synthetic workspace, ~190 clean + ~10 dirty on reference
+  machine (Apple Silicon, SSD, fibre). Compare `chi ship` (workspace mode)
+  against the serial baseline `for d in */; do (cd "$d" && chi ship); done`.
+- Kill criterion: parallel variant is < 2× faster than serial, OR exceeds
+  10 s wall-clock for the mostly-clean case. Either redesign (likely the
+  bottleneck is `gh`/`git fetch`, not the worker pool) or downscope to
+  triage-only.
+
+**H2 — `gh api graphql` batching replaces N × `git fetch` for ahead-detection.**
+- Test: 100-repo workspace, all clean locally, 30 ahead on remote. Count
+  network round-trips and wall-clock for ahead-detection alone. Compare
+  against `git fetch --all` per repo.
+- Kill criterion: graphql query cannot return `defaultBranchRef.target.oid`
+  + open-PR head refs in one round-trip per ≤ 50 repos (permission scopes,
+  schema drift, query-cost limits). Fall back to parallel `git fetch`.
+
+**H3 — Manifest-driven auto-clone closes the "exists on GitHub, missing
+locally" drift loop.**
+- Test: Add a manifest entry for a repo that doesn't exist locally. Run
+  `chi ship` from workspace root. Repo is cloned into the manifest-mapped
+  path; subsequent run treats it as a normal local repo.
+- Kill criterion: > 5 % of auto-clones fail in a 200-repo test pass
+  (auth, recursion, path collision). Demote auto-clone from default-on to
+  opt-in via `CHI_WORKSPACE_AUTOCLONE=1`.
+
+## Risks
+
+**R1 — Partial-clone state on mid-flight failure (top-3, expensive).**
+Auto-clone interrupted mid-stream (network drop, quota) leaves a half-formed
+`.git` directory. Next run sees a "real repo" and triages it incorrectly.
+Mitigation: clone into a temp dir + atomic `mv` only on success; on failure,
+remove the temp dir. Doctor warns on stray `*.cloning` siblings.
+
+**R2 — Manifest drift (top-3, expensive).**
+User manually moves or renames a local repo. Manifest still points at the
+old path → discovery thinks the repo is missing, auto-clone re-creates it,
+two local copies diverge. Mitigation: discovery walks local first, matches
+`remote.origin.url` ↔ `gh-slug`; only unmatched manifest entries trigger
+auto-clone. `chi doctor workspace` (future) flags slug-vs-path mismatches.
+
+**R3 — Concurrent LLM calls saturate the provider (top-3, expensive).**
+`chi ship` invokes the active provider for commit-message generation per
+repo. A pool of 8 concurrent runs hits provider rate limits (Claude API)
+or single-GPU contention (local Ollama). Mitigation: parallel commit phase,
+but route every `providerSmartGenerate` call through a single-slot queue in
+[src/provider/index.ts](../../../src/provider/index.ts); document via
+`CHI_PROVIDER_PARALLEL=N` for users who know their provider scales.
+
+**R4 — Credential-prompt deadlock (mitigated by design).**
+Resolved upstream by the serial-with-progress push decision recorded in
+*Notes* — listed here for completeness so reviewers don't re-derive it.
+
+## ADR sketch
+
+A new ADR (likely ADR-004 — *workspace discovery & manifest format*) lands
+between G1 pass and G2 start. Scope:
+
+- Discovery strategy: local-first (`find -maxdepth N -name .git`) ↔ manifest
+  reconciliation. Why local-first: avoids manifest-drift false-positives (R2).
+- Manifest format: line-based `<gh-slug> = <local-subpath>`. Why not YAML/JSON:
+  preserves zero-runtime-deps (ADR-003); manifest is read-mostly and edited
+  by humans, not machines.
+- Concurrency primitive: hand-rolled `Promise` pool in `src/concurrency.ts`.
+  Why not `p-limit`: ADR-003.
+- Behavior gates: `CHI_WORKSPACE_PARALLEL`, `CHI_WORKSPACE_DEPTH`,
+  `CHI_WORKSPACE_AUTOCLONE`. Conventions follow existing `CHI_*` prefix.
+
+The ADR is a **G2 prerequisite**, not a G1 prerequisite — G1 only needs
+agreement that the architectural questions exist and have plausible answers.
