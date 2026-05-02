@@ -1,6 +1,7 @@
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { c } from "../ui.js";
+import { resolveConflicts, finalizeRebase } from "../conflict.js";
 
 export interface GitResult {
   ok: boolean;
@@ -163,7 +164,7 @@ export interface PushOptions {
  * Logs unrecoverable failures to <gitDir>/chi-last-error.log and points the
  * user at `chi explain`.
  */
-export function pushWithRecovery(opts: PushOptions = {}): number {
+export async function pushWithRecovery(opts: PushOptions = {}): Promise<number> {
   const args = opts.args ?? [];
   const cwd = opts.cwd;
   const cmd = `git push ${args.join(" ")}`.trim();
@@ -193,19 +194,21 @@ export function pushWithRecovery(opts: PushOptions = {}): number {
     const inRebase =
       dir !== null && (existsSync(`${dir}/rebase-merge`) || existsSync(`${dir}/rebase-apply`));
     if (inRebase) {
-      process.stderr.write(`\n${c.red("chi ship: rebase produced conflicts — aborting")}\n`);
-      const conflicts = git(["diff", "--name-only", "--diff-filter=U"], cwd).stdout.trim();
-      if (conflicts) process.stderr.write(`conflicting files:\n${conflicts}\n`);
-      git(["rebase", "--abort"], cwd);
-      process.stderr.write(
-        c.dim(
-          "changes left in working tree as before push; pull manually and resolve\n",
-        ),
-      );
+      // Attempt interactive conflict resolution via claude
+      const repoPath = cwd ?? process.cwd();
+      const result = await resolveConflicts(repoPath);
+      const rc = finalizeRebase(repoPath, result);
+      if (rc !== 0) {
+        recordError(`${cmd} → pull --rebase conflicts`, rebase.status, rebase.stderr || rebase.stdout, cwd);
+        process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+        return rc;
+      }
+      // Resolution succeeded — fall through to retry push
+    } else {
+      recordError(`${cmd} → pull --rebase failed`, rebase.status, rebase.stderr || rebase.stdout, cwd);
+      process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+      return rebase.status ?? 1;
     }
-    recordError(`${cmd} → pull --rebase failed`, rebase.status, rebase.stderr || rebase.stdout, cwd);
-    process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
-    return rebase.status ?? 1;
   }
 
   const retry = git(["push", ...args], cwd);

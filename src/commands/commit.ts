@@ -229,7 +229,7 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   if (opts.push) {
-    return pushWithRecovery();
+    return await pushWithRecovery();
   }
 
   return 0;
