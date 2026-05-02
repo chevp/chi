@@ -12,10 +12,9 @@ import { commandExists, execSync, execInherit } from "../spawn.js";
 import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
-import { readLine, confirmYesNo } from "../prompt.js";
+import { readLine } from "../prompt.js";
 import * as workflowCmd from "./workflow.js";
-import * as shipCmd from "./ship.js";
-import * as doneCmd from "./done.js";
+import { createWorktree } from "./work.js";
 
 const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
 
@@ -481,9 +480,11 @@ async function cmdFix(argv: string[]): Promise<number> {
     process.stdout.write(
       `Usage: chi issue fix <issue-number> [hint...]
 
-Cuts a dedicated fix branch and starts a Claude session that follows the
-chevp-ai-framework lifecycle (Context → Exploration → Production) with
-AskUserQuestion at every decision point.
+Cuts a parallel worktree at ../<repo>-issue-<N> on branch fix/issue-<N>,
+then starts a Claude session there that follows the chevp-ai-framework
+lifecycle (Context → Exploration → Production) with AskUserQuestion at
+every decision point. Multiple issues can be fixed in parallel — each
+gets its own worktree.
 
 Arguments:
   <issue-number>   GitHub issue number to fix (required)
@@ -491,10 +492,13 @@ Arguments:
 
 Pre-flight requirements:
   - gh installed and authenticated
-  - inside a git repository, not in an active flow (no .git/chi-flow marker)
+  - inside a git repository, no active flow in the source repo
   - CHI_PROVIDER=claude-code (default), claude CLI on PATH
   - issue-fix workflow resolvable (per-repo override at .che/workflows/issue-fix.yml,
     or chi's built-in bundled with the CLI)
+
+After Claude exits, run \`chi ship\` and \`chi done\` from inside the
+worktree (\`chi done\` removes the worktree on merge).
 
 Examples:
   chi issue fix 42
@@ -575,6 +579,16 @@ Examples:
   }
 
   const branch = `fix/issue-${opts.num}`;
+  const worktreeName = `issue-${opts.num}`;
+
+  // Cut the worktree up-front. Branch naming preserved (`fix/issue-N`) so PR
+  // conventions / CI rules that match on `fix/` keep working. Worktree path
+  // and chi marker handled by createWorktree.
+  const wt = createWorktree(worktreeName, { base: "main", branch });
+  if (!wt.ok || !wt.path) {
+    process.stderr.write("chi issue fix: worktree creation failed\n");
+    return 1;
+  }
 
   // Best-effort spin up the provider; non-fatal.
   await providerEnsureRunning().catch(() => false);
@@ -586,18 +600,21 @@ Examples:
   writeFileSync(promptFile, prompt);
 
   process.stdout.write(`\n${c.bold("── chi issue fix ──")}\n`);
-  process.stdout.write(`  issue:  ${c.cyan(`#${opts.num}`)} ${issue.title || ""}\n`);
-  process.stdout.write(`  branch: ${branch}\n`);
-  process.stdout.write(`  prompt: ${promptFile}\n`);
-  process.stdout.write(`  model:  ${getProvider().activeModel()}\n\n`);
+  process.stdout.write(`  issue:    ${c.cyan(`#${opts.num}`)} ${issue.title || ""}\n`);
+  process.stdout.write(`  branch:   ${branch}\n`);
+  process.stdout.write(`  worktree: ${wt.path}\n`);
+  process.stdout.write(`  prompt:   ${promptFile}\n`);
+  process.stdout.write(`  model:    ${getProvider().activeModel()}\n\n`);
 
-  // Delegate to the workflow engine. The yaml file owns the branch-cut + claude
-  // launch sequence so power-users can edit it without recompiling chi.
+  // Delegate to the workflow engine. The yaml file owns the per-worktree
+  // marker write + claude launch sequence so power-users can edit it without
+  // recompiling chi.
   const code = await workflowCmd.runAlias([
     "issue-fix",
     `--num=${opts.num}`,
     `--branch=${branch}`,
     `--prompt-file=${promptFile}`,
+    `--worktree-path=${wt.path}`,
   ]);
 
   // Leave the prompt file on disk on failure for debugging; clean on success.
@@ -609,26 +626,22 @@ Examples:
     }
   } else {
     process.stderr.write(
-      `chi issue fix: workflow exited ${code} — prompt left at ${promptFile} for inspection\n`,
+      `chi issue fix: workflow exited ${code} — prompt left at ${promptFile} for inspection\n` +
+        `worktree left at ${wt.path} for inspection — 'chi work rm ${worktreeName} --force' to discard\n`,
     );
     return code;
   }
 
-  // Claude has exited cleanly. Offer to chain ship + done so the user does not
-  // have to leave the terminal, run two more commands, and remember the order.
-  // Bail out silently if the workflow happened to leave us off the fix branch
-  // (e.g. user manually switched) — ship would refuse anyway.
-  const cur = git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
-  if (cur !== branch) return 0;
-
+  // Claude has exited cleanly. The worktree is sitting at <wt.path> with a
+  // chi-flow marker that records branch + issue. ship/done need to run from
+  // there — chi process here lives in the source repo, so just print the
+  // next steps for the user.
   process.stdout.write("\n── claude session ended ──\n");
-  if (await confirmYesNo("run 'chi ship' now? [Y/n] ")) {
-    const shipRc = await shipCmd.run([]);
-    if (shipRc !== 0) return shipRc;
-    if (await confirmYesNo("run 'chi done' now? [Y/n] ")) {
-      return doneCmd.run([]);
-    }
-  }
+  process.stdout.write(`worktree: ${wt.path}\n`);
+  process.stdout.write("next steps:\n");
+  process.stdout.write(`  cd ${wt.path}\n`);
+  process.stdout.write("  chi ship    # commit + push, opens draft PR\n");
+  process.stdout.write("  chi done    # merges PR + removes the worktree\n");
   return 0;
 }
 

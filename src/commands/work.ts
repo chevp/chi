@@ -144,40 +144,70 @@ export function detectChiWorktree(): { worktreePath: string; meta: ChiWorktreeMe
   return { worktreePath: top, meta };
 }
 
-async function cmdCreate(name: string, base: string): Promise<number> {
+export interface CreateWorktreeOpts {
+  /** Base branch the worktree starts from. Default "main". */
+  base?: string;
+  /** Override the auto-derived branch (default `${branchPrefix()}${name}`). */
+  branch?: string;
+}
+
+export interface CreateWorktreeResult {
+  ok: boolean;
+  path?: string;
+  branch?: string;
+  /** Human-readable error if ok=false. Already written to stderr. */
+  error?: string;
+}
+
+/**
+ * Programmatic worktree creator. Used by both `chi work <name>` and by
+ * `chi issue fix <N>` (which wants a custom branch name).
+ *
+ * Side effects: writes to stderr on failure, writes the chi-worktree marker
+ * on success. Does NOT print success banner — callers do that themselves so
+ * they can fold it into their own UX.
+ */
+export function createWorktree(name: string, opts: CreateWorktreeOpts = {}): CreateWorktreeResult {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) {
-    process.stderr.write(`chi work: invalid name '${name}' — use [A-Za-z0-9._-]\n`);
-    return 1;
+    const error = `chi work: invalid name '${name}' — use [A-Za-z0-9._-]`;
+    process.stderr.write(`${error}\n`);
+    return { ok: false, error };
   }
 
   const root = repoRoot();
   if (!root) {
-    process.stderr.write("chi work: cannot resolve repo root\n");
-    return 1;
+    const error = "chi work: cannot resolve repo root";
+    process.stderr.write(`${error}\n`);
+    return { ok: false, error };
   }
 
+  const base = opts.base ?? "main";
+  const branch = opts.branch ?? `${branchPrefix()}${name}`;
   const wtPath = deriveWorktreePath(name, root);
-  if (existsSync(wtPath)) {
-    process.stderr.write(`chi work: path already exists: ${wtPath}\n`);
-    return 1;
-  }
 
-  const branch = `${branchPrefix()}${name}`;
+  if (existsSync(wtPath)) {
+    const error = `chi work: path already exists: ${wtPath}`;
+    process.stderr.write(`${error}\n`);
+    return { ok: false, error };
+  }
   if (git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).ok) {
-    process.stderr.write(`chi work: branch '${branch}' already exists\n`);
-    return 1;
+    const error = `chi work: branch '${branch}' already exists`;
+    process.stderr.write(`${error}\n`);
+    return { ok: false, error };
   }
   if (!git(["show-ref", "--verify", "--quiet", `refs/heads/${base}`]).ok) {
-    process.stderr.write(`chi work: base branch '${base}' does not exist locally\n`);
-    return 1;
+    const error = `chi work: base branch '${base}' does not exist locally`;
+    process.stderr.write(`${error}\n`);
+    return { ok: false, error };
   }
 
-  // Best-effort fetch so the worktree starts from current origin/<base>.
   git(["fetch", "origin", base, "--quiet"]);
 
   const add = git(["worktree", "add", "-b", branch, wtPath, base]);
   process.stderr.write(add.stderr);
-  if (!add.ok) return add.status ?? 1;
+  if (!add.ok) {
+    return { ok: false, error: add.stderr || "git worktree add failed" };
+  }
 
   const common = commonGitDir();
   const marker = markerPath(wtPath, common);
@@ -196,11 +226,17 @@ async function cmdCreate(name: string, base: string): Promise<number> {
     );
   }
 
+  return { ok: true, path: wtPath, branch };
+}
+
+async function cmdCreate(name: string, base: string): Promise<number> {
+  const r = createWorktree(name, { base });
+  if (!r.ok) return 1;
   process.stdout.write(`\n${c.bold("── chi work created ──")}\n`);
   process.stdout.write(`  name:   ${name}\n`);
-  process.stdout.write(`  path:   ${wtPath}\n`);
-  process.stdout.write(`  branch: ${branch} (from ${base})\n\n`);
-  process.stdout.write(`next: cd ${wtPath}\n`);
+  process.stdout.write(`  path:   ${r.path}\n`);
+  process.stdout.write(`  branch: ${r.branch} (from ${base})\n\n`);
+  process.stdout.write(`next: cd ${r.path}\n`);
   return 0;
 }
 
