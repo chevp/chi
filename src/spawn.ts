@@ -137,24 +137,36 @@ export function execAsync(
       }
     }
 
+    // Some children (e.g. `docker info` blocked on a stuck daemon socket)
+    // ignore SIGTERM, so escalate to SIGKILL after a short grace period.
     let timer: NodeJS.Timeout | undefined;
+    let killer: NodeJS.Timeout | undefined;
     if (opts.timeoutMs) {
       timer = setTimeout(() => {
         try {
-          child.kill();
+          child.kill("SIGTERM");
         } catch {
           /* ignore */
         }
+        killer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            /* ignore */
+          }
+        }, 500);
       }, opts.timeoutMs);
     }
 
     child.on("error", (err) => {
       if (timer) clearTimeout(timer);
+      if (killer) clearTimeout(killer);
       resolve({ ok: false, stdout, stderr: stderr || String(err), status: null });
     });
 
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
+      if (killer) clearTimeout(killer);
       resolve({ ok: code === 0, stdout, stderr, status: code });
     });
   });

@@ -129,6 +129,7 @@ Mapping from che-cli (shell) → chi (TS):
 | `lib/che/git/conflicts.sh`           | —                                    | not ported (see PROP) |
 | `lib/che/git/warnings.sh`            | —                                    | not ported (see PROP) |
 | `lib/che/issue.sh`                   | `src/commands/issue.ts`              | ✓ done      |
+| (new — no che-cli equivalent)        | `chi issue fix` + `.che/workflows/issue-fix.yml` | ✓ done (PROP-008) |
 | `lib/che/explain.sh`                 | `src/commands/explain.ts`            | ✓ done      |
 | `lib/che/init.sh`                    | `src/commands/init.ts`               | ✓ done      |
 | `lib/che/workflow.sh` + workflow/    | `src/commands/workflow.ts`, `src/workflow/loader.ts` | ✓ done |
