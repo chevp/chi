@@ -244,7 +244,22 @@ ${hints}`;
 
   const prompt = `You are drafting a GitHub issue.
 
-Format (exact):
+FIRST, judge whether the work warrants an issue at all. Issues feed a heavy
+framework-driven fix workflow (Context → Exploration → Production gates,
+dedicated branch, PR, review). The bar is: the change should be worth
+tracking, discussing, or assigning to someone other than the reporter.
+
+REJECT (do not draft an issue) when the work is any of:
+- a typo, wording tweak, or single-sentence prose edit
+- a single-file documentation / markdown / proposal-file change
+- a one-line config / value bump with no behavioral risk
+- anything a developer would do directly in under ~5 minutes without
+  coordination
+
+If you reject, reply with EXACTLY one line and nothing else:
+TOO_SMALL: <one short sentence saying why, suggesting the user just makes the change directly>
+
+Otherwise, draft the issue in this exact format:
 <title>
 <blank line>
 ---
@@ -255,7 +270,7 @@ progress: <free-form, e.g. "0%" or "0/3 steps">
 <body in GitHub-flavored markdown>
 
 Rules:
-- Reply with ONLY the issue text. No quotes, no preamble, no explanation.
+- Reply with ONLY the issue text (or the TOO_SMALL line). No quotes, no preamble, no explanation.
 - Title: one line, 4–72 characters, imperative or descriptive.
 - The frontmatter block is REQUIRED, immediately after the blank line.
 - Body: concise GitHub-flavored markdown. 4-15 lines is typical.
@@ -286,6 +301,15 @@ ${seed}`;
 
   if (lines.length === 0) {
     process.stderr.write("chi issue: LLM returned an empty title — aborting\n");
+    return 1;
+  }
+
+  const first = (lines[0] ?? "").trim();
+  const tooSmall = first.match(/^TOO_SMALL\s*:\s*(.*)$/i);
+  if (tooSmall) {
+    const reason = (tooSmall[1] ?? "").trim() || "the change is too small to warrant an issue";
+    process.stderr.write(`\n${c.yellow("✗ refused:")} ${reason}\n`);
+    process.stderr.write("  chi issue: this change is too small for the issue→fix workflow — make the change directly\n");
     return 1;
   }
 
