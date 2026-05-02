@@ -94,13 +94,13 @@ export function shortStatus(): string {
   return git(["-c", "color.status=always", "status", "--short"]).stdout;
 }
 
-export function recentCommits(n = 5): string {
+export function recentCommits(n = 5, cwd?: string): string {
   return git([
     "-c", "color.ui=always",
     "log",
     `-n`, String(n),
     "--pretty=format:  %C(auto)%h%Creset %s %C(dim)(%cr)%Creset",
-  ]).stdout;
+  ], cwd).stdout;
 }
 
 export function gitDir(cwd?: string): string | null {

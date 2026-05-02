@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getPath, lengthOf, parseYaml, type YamlValue } from "../yaml.js";
 
 export interface ResolvedWorkflow {
@@ -11,6 +12,34 @@ export interface ResolvedWorkflow {
   file: string;
   /** Parsed document */
   doc: YamlValue;
+  /** True when the workflow came from chi's bundled .che/, not a per-repo override. */
+  builtin: boolean;
+}
+
+/**
+ * Path to chi's install root (the directory containing chi's own `.che/`).
+ *
+ * Both compiled (`<root>/dist/workflow/loader.js`) and dev (`<root>/src/workflow/loader.ts`
+ * via tsx) layouts place this file two directories below the install root.
+ */
+export function bundleRoot(): string {
+  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+}
+
+/**
+ * Look up `<name>.yml|yaml` inside chi's bundled `.che/workflows/`.
+ * Returns null when chi was not installed with its `.che/` (e.g. partial
+ * checkout) or the named workflow is not bundled.
+ */
+function findBuiltin(name: string): { root: string; dir: string; file: string } | null {
+  const root = bundleRoot();
+  const dir = join(root, ".che", "workflows");
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return null;
+  for (const ext of ["yml", "yaml"]) {
+    const file = join(dir, `${name}.${ext}`);
+    if (existsSync(file)) return { root, dir, file };
+  }
+  return null;
 }
 
 export class WorkflowError extends Error {}
@@ -33,19 +62,35 @@ export function loadFile(file: string): YamlValue {
   return parseYaml(readFileSync(file, "utf8"));
 }
 
-/** Resolve <name> to a workflow yml/yaml file, parsed and validated. */
+/**
+ * Resolve <name> to a workflow yml/yaml file, parsed and validated.
+ *
+ * Resolution order:
+ *   1. Per-repo override — walk up from cwd looking for `.che/workflows/<name>`.
+ *   2. Bundled fallback — chi's own `.che/workflows/<name>` shipped with the CLI.
+ *
+ * Per-repo always wins, so users can override any built-in workflow by dropping
+ * a same-named file into their repo's `.che/workflows/`.
+ */
 export function resolveWorkflow(name: string, cwd: string = process.cwd()): ResolvedWorkflow {
   if (!name) throw new WorkflowError("missing workflow name");
   const where = findWorkflowsDir(cwd);
-  if (!where) throw new WorkflowError(`no .che/workflows/ found above ${cwd}`);
-  for (const ext of ["yml", "yaml"]) {
-    const file = join(where.dir, `${name}.${ext}`);
-    if (existsSync(file)) {
-      const doc = loadFile(file);
-      return { root: where.root, dir: where.dir, file, doc };
+  if (where) {
+    for (const ext of ["yml", "yaml"]) {
+      const file = join(where.dir, `${name}.${ext}`);
+      if (existsSync(file)) {
+        const doc = loadFile(file);
+        return { root: where.root, dir: where.dir, file, doc, builtin: false };
+      }
     }
   }
-  throw new WorkflowError(`workflow not found: ${name} (looked in ${where.dir})`);
+  const builtin = findBuiltin(name);
+  if (builtin) {
+    const doc = loadFile(builtin.file);
+    return { root: builtin.root, dir: builtin.dir, file: builtin.file, doc, builtin: true };
+  }
+  if (!where) throw new WorkflowError(`no .che/workflows/ found above ${cwd}`);
+  throw new WorkflowError(`workflow not found: ${name} (looked in ${where.dir} or chi's bundled workflows)`);
 }
 
 /** Validate the top-level shape: name + non-empty steps with `script:` each. */
@@ -193,7 +238,7 @@ export function resolveTrigger(trigger: string, cwd: string = process.cwd()): Tr
   const stem = parse(m.file).name;
   return {
     kind: "match",
-    resolved: { root: where.root, dir: where.dir, file: m.file, doc: m.doc },
+    resolved: { root: where.root, dir: where.dir, file: m.file, doc: m.doc, builtin: false },
     stem,
   };
 }
