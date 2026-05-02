@@ -61,6 +61,7 @@ must produce identical output and exit code as today.
 | Concurrency | `src/concurrency.ts` (new) — `pool()` per ADR-004 |
 | gh batch query | `src/gh/graphql.ts` (new) — minimal `gh api graphql` wrapper |
 | Auto-clone phase | inside `ship-workspace.ts`, gated by `CHI_WORKSPACE_AUTOCLONE` |
+| Provider lock | [src/provider/index.ts](../../src/provider/index.ts) — single-slot queue around `providerSmartGenerate`, sized by `CHI_PROVIDER_PARALLEL` (default 1) |
 | Doctor integration | [src/commands/doctor.ts](../../src/commands/doctor.ts) — new `doctor workspace` target |
 | Help text | [src/commands/ship.ts](../../src/commands/ship.ts) HELP — append workspace mode section |
 
@@ -153,6 +154,17 @@ Two sub-phases per the PROP-006 push-serialization decision:
   create --draft` runs here too (after push). Serial because credential
   helpers and `gh` auth do not interleave cleanly across processes.
 
+**Provider call serialization (R3 mitigation).** Inside Phase 4a, the per-repo
+work calls `providerSmartGenerate` for commit-message generation. Eight
+concurrent Claude API calls saturate per-account rate limits within ~3 seconds
+on the reference workspace. Solution: route every `providerSmartGenerate`
+invocation through a **single-slot queue** in
+[src/provider/index.ts](../../src/provider/index.ts) so commit prep
+parallelizes everywhere *except* the LLM call itself. Tunable via
+`CHI_PROVIDER_PARALLEL=N` (default 1) for users on accounts/providers that
+scale (local Ollama on multi-GPU, Anthropic Tier 4+, etc.). See ADR-004
+§4 for the design.
+
 ### Output format
 
 Three sections:
@@ -205,6 +217,13 @@ does not abort the run.
     manifest entries, repos with no upstream.
 12. A failure in one repo (e.g. push rejected) does not abort the run; the
     final report names it; exit code = 1.
+13. Provider serialization holds: with `CHI_PROVIDER_PARALLEL=1` (default),
+    a workspace with 8 dirty repos sees provider calls strictly sequential
+    (verifiable by an instrumented stub provider that records call timestamps
+    and asserts `call[k+1].start ≥ call[k].end`).
+14. Single-repo `chi commit` (no workspace involved) shows no measurable
+    latency regression from the provider lock — the lock is uncontended in
+    that path.
 
 ## Challenger
 
@@ -213,38 +232,49 @@ cheapest detection signal, response.
 
 ### Top-3 failure modes
 
-1. **Push-phase credential prompt deadlock.**
-   - Breakage: `git push` for repo K asks for SSH passphrase; chi prints the
-     prompt mid-progress-line and the user can't see what's being asked.
-     User Ctrl-Cs; repos K+1..N are not pushed.
-   - Detection: stderr contains "Enter passphrase" while we're past the
-     parallel triage phase.
-   - Response: detect TTY at start; if TTY and `SSH_AUTH_SOCK` is empty,
-     print a one-line warning before Phase 4b ("ssh-agent not loaded —
-     pushes will prompt sequentially") and clear the progress line before
-     each push (`\r\x1b[K`) so prompts render cleanly.
+Mapped directly from PROP-006 R1–R3 (R4 — credential-prompt deadlock — is
+resolved upstream by the serial-with-progress push decision and is not
+re-litigated here).
 
-2. **Partial-clone state poisons re-runs.**
+1. **Partial-clone state poisons re-runs (PROP-006 R1).**
    - Breakage: Phase 1 clones repo X but git aborts mid-clone (network
-     blip). The directory exists but `.git/HEAD` is missing or the working
-     tree is empty. Phase 2 triage on X fails, every subsequent run repeats
-     the failure.
+     blip, quota). The directory exists but `.git/HEAD` is missing or the
+     working tree is empty. Phase 2 triage on X fails, every subsequent
+     run repeats the failure.
    - Detection: `git -C X rev-parse --is-inside-work-tree` returns nonzero
      on a directory that exists.
-   - Response: Phase 2 detects "git dir present but not a valid repo" and
-     surfaces the path with a `chi doctor workspace --repair` hint. Repair
-     command (separate PROP) deletes the half-clone after confirmation.
+   - Response: Phase 1 clones into `<subpath>.cloning` first and atomically
+     `mv` to `<subpath>` only on success; on failure, remove the temp dir.
+     Phase 2 still defends in depth — detects "git dir present but not a
+     valid repo" and surfaces the path with a `chi doctor workspace
+     --repair` hint (repair command lands in a future PROP).
 
-3. **Manifest drift after GitHub repo rename.**
+2. **Manifest drift after GitHub repo rename (PROP-006 R2).**
    - Breakage: `chevp/synth-game` renamed to `chevp/synth-arena` upstream.
      Manifest still points the old slug to `synth/synth-game`. Phase 1 sees
-     `chevp/synth-arena` as "missing locally" and (because no manifest entry)
+     `chevp/synth-arena` as "missing locally" and (no manifest entry)
      warns "unmapped". User confused — the repo *is* there, just under the
      old name.
    - Detection: a manifest slug that resolves to neither a local dir's
-     remote.origin.url nor a GitHub repo.
-   - Response: `chi doctor workspace` flags drift entries explicitly. The
-     ship run does not auto-rename; manual manifest fix required.
+     `remote.origin.url` nor a GitHub repo.
+   - Response: discovery walks local first and matches by
+     `remote.origin.url`, not slug; only unmatched manifest entries trigger
+     auto-clone. `chi doctor workspace` flags slug-vs-path mismatches
+     explicitly. The ship run does not auto-rename; manual manifest fix
+     required.
+
+3. **Provider rate-limit saturation under parallel commit prep (PROP-006 R3).**
+   - Breakage: Phase 4a calls `providerSmartGenerate` for commit-message
+     generation per repo. Eight concurrent Claude API calls hit the
+     per-account RPS limit within ~3 seconds on a 200-repo workspace; some
+     repos get 429 responses, their commit step fails, and the user sees
+     a flurry of "rate limited" errors with no obvious recovery path.
+   - Detection: provider returns HTTP 429 (Claude/Copilot) or sustained
+     latency spikes >5s on local Ollama indicating GPU contention.
+   - Response: serialize *only the provider call* through a single-slot
+     queue in [src/provider/index.ts](../../src/provider/index.ts); the
+     rest of Phase 4a (git operations, file I/O) stays parallel. Tunable
+     via `CHI_PROVIDER_PARALLEL=N`. See ADR-004 §4.
 
 ### Two alternatives
 

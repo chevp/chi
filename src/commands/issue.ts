@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { c } from "../ui.js";
@@ -9,18 +9,20 @@ import {
   providerSmartGenerate,
 } from "../provider/index.js";
 import { commandExists, execSync, execInherit } from "../spawn.js";
-import { git, isInsideRepo } from "../git/index.js";
+import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
 import { readLine } from "../prompt.js";
+import * as workflowCmd from "./workflow.js";
 
 const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
 
 Usage:
-  chi issue [create] [description]   open a new issue (LLM drafts title/body)
-  chi issue list [--limit N]         list open issues for the current repo
-  chi issue close <n> [--reason R]   close issue #n
-  chi issue -h | --help              show this help
+  chi issue [create] [description]    open a new issue (LLM drafts title/body)
+  chi issue list [--limit N]          list open issues for the current repo
+  chi issue close <n> [--reason R]    close issue #n
+  chi issue fix <n> [hint]            cut fix branch + start framework-driven Claude session
+  chi issue -h | --help               show this help
 `;
 
 function requireGh(): string | null {

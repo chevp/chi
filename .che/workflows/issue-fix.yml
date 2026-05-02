@@ -1,0 +1,28 @@
+name: issue-fix
+description: Framework-driven Claude fix session on a dedicated branch (CTX → EXP → PRD)
+
+# Invoked by `chi issue fix <N> "<hint>"`. The subcommand performs pre-flight
+# validation (gh present, no active flow, claude-code provider) and writes the
+# framework-prompt to a tmp file before delegating here.
+#
+# This workflow is intentionally thin: branch creation + Claude session start.
+# It can also be run directly:  chi run issue-fix --num=42 --branch=fix/issue-42 --prompt-file=/tmp/...
+
+inputs:
+  - name: num
+    required: true
+    description: GitHub issue number being fixed
+  - name: branch
+    required: true
+    description: Local branch to create (e.g. fix/issue-42)
+  - name: prompt-file
+    required: true
+    description: Absolute path to the framework prompt assembled by the subcommand
+
+steps:
+  - name: start fix branch and launch claude
+    script: .che/scripts/issue-fix.sh
+    args:
+      - ${num}
+      - ${branch}
+      - ${prompt-file}

@@ -9,7 +9,7 @@ approved-at: —
 supersedes: —
 ---
 
-# ADR-004: Workspace Discovery, Manifest Format, and Concurrency Primitive
+# ADR-004: Workspace Discovery, Manifest Format, Concurrency, and Provider Serialization
 
 ## Status
 Proposed.
@@ -18,7 +18,7 @@ Proposed.
 
 PRD-002 introduces workspace-aware behavior to `chi ship`: when invoked from a
 directory **without** `.git`, the command treats the cwd as a root containing
-many sibling git repos and ships them all. This requires three new patterns
+many sibling git repos and ships them all. This requires four new patterns
 not previously needed in chi:
 
 1. **Workspace discovery semantics** — what is "a workspace"? How deep do we
@@ -28,6 +28,11 @@ not previously needed in chi:
    user-curated, and parseable without dependencies.
 3. **Concurrency primitive** — chi has no `Promise` pool today; the workspace
    pipeline needs one.
+4. **Provider call serialization** — the workspace pipeline parallelizes git
+   operations across N repos, but each repo's commit phase calls into the
+   active AI provider. Eight concurrent provider calls saturate the
+   rate-limits of every reasonable account/runtime (PROP-006 R3). The git
+   pool and the provider pool need different sizes, with different defaults.
 
 Each is a "new pattern" per framework rules and needs an ADR.
 
@@ -102,6 +107,46 @@ Behavior:
 Implementation: index pointer + N awaiters; ~30 lines, zero deps. No
 queue/scheduler abstraction; do not generalize.
 
+### 4. Provider call serialization
+
+Independent of the git pool above, all calls into
+[src/provider/index.ts](../../src/provider/index.ts)
+`providerSmartGenerate()` (and any future top-level provider entry points)
+route through a **single-slot async queue** owned by the provider router.
+
+```ts
+// src/provider/index.ts (sketch)
+let providerLock: Promise<unknown> = Promise.resolve();
+export async function providerSmartGenerate(...): Promise<...> {
+  const slot = (async () => {
+    await providerLock.catch(() => {}); // wait for predecessor, swallow its errors
+    return doGenerate(...);
+  })();
+  providerLock = slot;
+  return slot;
+}
+```
+
+Concurrency for provider calls is governed by `CHI_PROVIDER_PARALLEL` (int,
+default `1`). When set to `N>1`, the single lock becomes an N-slot pool
+using the same primitive from §3. The default is conservative because:
+
+- Anthropic API free/Pro tiers cap at low double-digit RPS; bursting 8
+  concurrent calls produces 429s within seconds.
+- `gh copilot` shells out to a per-process auth token shared by all
+  invocations — concurrent calls race on token refresh.
+- Local Ollama runs one inference at a time per GPU; concurrency just
+  queues at the model layer with worse total wall-clock.
+
+Users on Anthropic Tier 4+ or multi-GPU Ollama can opt into
+`CHI_PROVIDER_PARALLEL=4` (or more) and recover wall-clock for
+commit-heavy workspaces.
+
+The git pool and provider pool are deliberately **separate** primitives:
+the git pool default of 8 reflects file-descriptor limits and stderr
+legibility; the provider pool default of 1 reflects external service
+contract. Conflating them would force one to compromise.
+
 ## Alternatives
 
 ### Alternative A (discovery): generic recursion with `.gitignore`-style skip rules
@@ -127,6 +172,22 @@ queue/scheduler abstraction; do not generalize.
 - Cons: head-of-line blocking — slow repos in a batch stall the next batch
   even if fast workers are idle. The pool pattern keeps utilization at
   `concurrency` continuously.
+
+### Alternative E (provider serialization): one shared pool, set to 1
+- Sketch: drop the separate `CHI_PROVIDER_PARALLEL` env; reuse
+  `CHI_WORKSPACE_PARALLEL` for everything; default to 1 globally.
+- Pros: one knob, one mental model.
+- Cons: serializes git operations too — a 200-repo triage that should run
+  in <2s would take >30s. The bottlenecks are different in kind (file
+  descriptors / shell legibility vs. external rate limits) and reasonable
+  defaults differ by an order of magnitude. Reject in favor of two pools.
+
+### Alternative F (provider serialization): no serialization, document the risk
+- Sketch: let users hit 429s; surface the error and let them retry.
+- Pros: simplest code; matches "no error handling for scenarios that can't
+  happen" — except this scenario *will* happen on every default-config run.
+- Cons: makes workspace mode unusable on the default Anthropic tier on day
+  one. Reject.
 
 ## Consequences
 
@@ -158,3 +219,9 @@ queue/scheduler abstraction; do not generalize.
 - **Concurrency contention** on git's index lock is *not* a risk — each repo
   has its own `.git/index`. `gh` API rate limits are real; the GraphQL batch
   step keeps requests well below limits.
+- **Provider rate-limit pressure**: even with §4 serialization, a 200-repo
+  workspace where every repo is dirty makes 200 sequential provider calls.
+  At ~3s/call that's 10 minutes of provider wall-clock. Mitigation: this is
+  the inherent shape of the workload (one commit message per repo); users
+  can `CHI_PROVIDER_PARALLEL=4` if their tier supports it, or use a faster
+  provider (Haiku, local Ollama). Not a chi-fixable bug.
