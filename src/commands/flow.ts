@@ -127,10 +127,11 @@ interface FlowMarker {
   branch: string;
   base: string;
   pr: string;
+  issue: string;
 }
 
 export function readMarker(path: string): FlowMarker {
-  const out: FlowMarker = { branch: "", base: "", pr: "" };
+  const out: FlowMarker = { branch: "", base: "", pr: "", issue: "" };
   try {
     const raw = readFileSync(path, "utf8");
     for (const line of raw.split(/\r?\n/)) {
@@ -141,6 +142,7 @@ export function readMarker(path: string): FlowMarker {
       if (k === "branch") out.branch = v;
       else if (k === "base") out.base = v;
       else if (k === "pr") out.pr = v;
+      else if (k === "issue") out.issue = v;
     }
   } catch {
     /* ignore */

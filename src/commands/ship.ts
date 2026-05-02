@@ -154,16 +154,28 @@ export async function run(argv: string[]): Promise<number> {
         );
         return 0;
       }
-      const create = execSync("gh", [
-        "pr",
-        "create",
-        "--draft",
-        "--fill",
-        "--base",
-        base,
-        "--head",
-        m.branch,
-      ]);
+      const createArgs = ["pr", "create", "--draft", "--base", base, "--head", m.branch];
+      if (m.issue) {
+        // Build title/body explicitly so we can inject "Closes #N" — GitHub's
+        // auto-close keyword. `--fill` would otherwise pull body from commit
+        // messages, which usually don't contain the magic phrase.
+        const log = git(["log", "-1", "--format=%B", m.branch]).stdout;
+        const lines = log.split(/\r?\n/);
+        const title = (lines.shift() ?? "").trim() || `fix: issue #${m.issue}`;
+        while (lines.length && (lines[0] ?? "").trim() === "") lines.shift();
+        const bodyText = lines.join("\n").trim();
+        const closes = `Closes #${m.issue}`;
+        const body =
+          bodyText.length === 0
+            ? closes
+            : bodyText.includes(closes)
+              ? bodyText
+              : `${bodyText}\n\n${closes}`;
+        createArgs.push("--title", title, "--body", body);
+      } else {
+        createArgs.push("--fill");
+      }
+      const create = execSync("gh", createArgs);
       if (!create.ok) {
         process.stderr.write(create.stderr);
         return create.status ?? 1;

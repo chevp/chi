@@ -12,8 +12,10 @@ import { commandExists, execSync, execInherit } from "../spawn.js";
 import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
-import { readLine } from "../prompt.js";
+import { readLine, confirmYesNo } from "../prompt.js";
 import * as workflowCmd from "./workflow.js";
+import * as shipCmd from "./ship.js";
+import * as doneCmd from "./done.js";
 
 const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
 
@@ -584,8 +586,25 @@ Examples:
     process.stderr.write(
       `chi issue fix: workflow exited ${code} — prompt left at ${promptFile} for inspection\n`,
     );
+    return code;
   }
-  return code;
+
+  // Claude has exited cleanly. Offer to chain ship + done so the user does not
+  // have to leave the terminal, run two more commands, and remember the order.
+  // Bail out silently if the workflow happened to leave us off the fix branch
+  // (e.g. user manually switched) — ship would refuse anyway.
+  const cur = git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+  if (cur !== branch) return 0;
+
+  process.stdout.write("\n── claude session ended ──\n");
+  if (await confirmYesNo("run 'chi ship' now? [Y/n] ")) {
+    const shipRc = await shipCmd.run([]);
+    if (shipRc !== 0) return shipRc;
+    if (await confirmYesNo("run 'chi done' now? [Y/n] ")) {
+      return doneCmd.run([]);
+    }
+  }
+  return 0;
 }
 
 export async function run(argv: string[]): Promise<number> {

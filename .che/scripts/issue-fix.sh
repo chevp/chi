@@ -25,10 +25,17 @@ fi
 echo "── issue-fix: cutting branch $BRANCH for issue #$NUM ──"
 chi flow "$BRANCH"
 
+# Tag the flow marker with the issue number so `chi ship` injects "Closes #N"
+# into the PR body and `chi done` can close the issue as a fallback.
+GIT_DIR=$(git rev-parse --git-dir)
+echo "issue=$NUM" >> "$GIT_DIR/chi-flow"
+
 echo
 echo "── issue-fix: launching claude with framework prompt ──"
 echo "(prompt: $PROMPT_FILE)"
 echo
 
 # Pipe the prompt as the opening turn; claude continues interactively from there.
-exec claude < "$PROMPT_FILE"
+# `exec` is intentionally omitted so the chi parent regains control after claude
+# exits — cmdFix then offers to chain `chi ship` + `chi done`.
+claude < "$PROMPT_FILE"

@@ -101,6 +101,14 @@ export async function run(argv: string[]): Promise<number> {
     git(["branch", "-D", m.branch]); // best-effort
   }
 
+  // Best-effort close the linked issue. With auto-merge GitHub's "Closes #N"
+  // parser handles this asynchronously, but in direct-merge mode the issue
+  // closes only if the PR body had the keyword — call gh as a safety net.
+  // Idempotent: closing an already-closed issue exits non-zero, which we ignore.
+  if (m.issue) {
+    execSync("gh", ["issue", "close", m.issue, "--reason", "completed"]);
+  }
+
   try {
     rmSync(marker, { force: true });
   } catch {

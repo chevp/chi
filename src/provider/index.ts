@@ -3,6 +3,40 @@ import { ollamaProvider, startOllamaServer } from "./ollama.js";
 import { claudeCodeProvider } from "./claude-code.js";
 import { copilotProvider } from "./copilot.js";
 
+// Semaphore for provider serialization (ADR-004 §4). Workspace-mode runs N
+// parallel git workers, but provider calls must stay below the active
+// account/runtime's effective concurrency to avoid 429s and GPU contention.
+// Single-repo invocations take the uncontended fast path (one cheap promise).
+class Semaphore {
+  private slots: number;
+  private waiters: Array<() => void> = [];
+  constructor(n: number) {
+    this.slots = n;
+  }
+  async acquire(): Promise<void> {
+    if (this.slots > 0) {
+      this.slots -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+  release(): void {
+    const w = this.waiters.shift();
+    if (w) w();
+    else this.slots += 1;
+  }
+}
+
+let providerSem: Semaphore | null = null;
+function providerSemaphore(): Semaphore {
+  if (providerSem) return providerSem;
+  const raw = process.env.CHI_PROVIDER_PARALLEL ?? "1";
+  const n = Number.parseInt(raw, 10);
+  const slots = Number.isFinite(n) && n > 0 ? n : 1;
+  providerSem = new Semaphore(slots);
+  return providerSem;
+}
+
 const REGISTRY: Record<ProviderName, Provider> = {
   ollama: ollamaProvider,
   "claude-code": claudeCodeProvider,
@@ -63,6 +97,19 @@ export interface SmartGenerateOptions {
 export async function providerSmartGenerate(
   prompt: string,
   opts: SmartGenerateOptions = {},
+): Promise<string> {
+  const sem = providerSemaphore();
+  await sem.acquire();
+  try {
+    return await doSmartGenerate(prompt, opts);
+  } finally {
+    sem.release();
+  }
+}
+
+async function doSmartGenerate(
+  prompt: string,
+  opts: SmartGenerateOptions,
 ): Promise<string> {
   const force = opts.complex || process.env.CHI_FORCE_CLAUDE_CODE === "1";
 
