@@ -10,5 +10,6 @@ One file per decision: `ADR-NNN-<short-title>.md`. Use [the framework template](
 | [ADR-002](ADR-002-hand-rolled-command-dispatch.md) | Hand-rolled command dispatch (no commander/yargs) | Accepted |
 | [ADR-003](ADR-003-zero-runtime-dependencies.md) | Zero runtime dependencies | Accepted |
 | [ADR-005](ADR-005-bundled-workflow-fallback.md) | Bundled workflow fallback | Accepted |
+| [ADR-006](ADR-006-worktree-parallelization.md) | Worktrees as the parallelism primitive | Accepted |
 
 When you add a new ADR, also append a row above and a `adr-accepted` line in [../../governance-log.md](../../governance-log.md) once approved.

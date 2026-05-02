@@ -8,7 +8,10 @@ Commands:
                       (init missing submodules, ff-pull on a branch);
                       in flow mode: push -u + open/update draft PR
   flow <branch>       start a flow branch (pull base, checkout new, mark repo)
+  work <name>         create a parallel git worktree (chi/<name> branch);
+                      'chi work list|rm|cd' manage existing worktrees
   done                finish active flow: gh pr merge --squash --auto, back to base
+                      (in a worktree: removes the worktree after merge)
   issue [sub] [args]  open / list / close / fix GitHub issues (AI-drafted body);
                       'chi issue [text]' is shorthand for 'chi issue create [text]';
                       'chi issue fix <n> [hint]' cuts a fix branch + starts a

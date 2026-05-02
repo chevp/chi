@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { commandExists, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo } from "../git/index.js";
 import { readMarker } from "./flow.js";
+import { detectChiWorktree } from "./work.js";
 
 const HELP = `chi done — finish the active chi flow.
 
@@ -111,6 +112,44 @@ export async function run(argv: string[]): Promise<number> {
     }
     process.stderr.write(r.stderr);
     return r.status ?? 1;
+  }
+
+  // If we're inside a chi-managed worktree, the cleanup story is different:
+  // `git checkout <base>` here would fail (base is checked out in the main
+  // repo) and we don't want to disturb the source repo's HEAD anyway — the
+  // user may be working on something else there. Just remove the worktree,
+  // drop the local branch, close the issue. The user pulls main themselves.
+  const wt = detectChiWorktree();
+  if (wt) {
+    const source = wt.meta.source;
+    const rm = git(["worktree", "remove", wt.worktreePath, "--force"], source);
+    process.stderr.write(rm.stderr);
+    if (!rm.ok) {
+      process.stderr.write(
+        `chi done: 'git worktree remove' failed — clean up manually with 'git worktree prune'\n`,
+      );
+      return rm.status ?? 1;
+    }
+    if (git(["show-ref", "--verify", "--quiet", `refs/heads/${m.branch}`], source).ok) {
+      git(["branch", "-D", m.branch], source);
+    }
+    git(["remote", "prune", "origin"], source); // best-effort
+
+    const issueToClose = issueOverride || m.issue;
+    if (issueToClose) {
+      execSync("gh", ["issue", "close", issueToClose, "--reason", "completed"], { cwd: source });
+    }
+
+    // Marker is gone with the worktree; nothing to delete locally.
+    if (mergeMode === "auto") {
+      process.stdout.write(
+        `\n── flow done: PR #${m.pr} queued (auto-merge) + worktree removed ──\n`,
+      );
+    } else {
+      process.stdout.write(`\n── flow done: PR #${m.pr} merged + worktree removed ──\n`);
+    }
+    process.stdout.write(`note: your shell is now in a deleted directory — cd ${source}\n`);
+    return 0;
   }
 
   const co = git(["checkout", base]);
