@@ -85,13 +85,19 @@ export async function run(argv: string[]): Promise<number> {
     return 1;
   }
 
+  // Detect worktree mode up-front: in a chi-managed worktree, gh's
+  // `--delete-branch` would try to `git checkout <base>` inside the worktree
+  // to clear it before deleting the local branch — and fail because <base>
+  // is checked out in the main repo. We drop the flag in worktree mode and
+  // do both local + remote branch cleanup ourselves below.
+  const wt = detectChiWorktree();
+
   let mergeMode: "auto" | "direct" = "auto";
   let draftPromoted = false;
   for (;;) {
-    const args =
-      mergeMode === "auto"
-        ? ["pr", "merge", m.pr, "--squash", "--auto", "--delete-branch"]
-        : ["pr", "merge", m.pr, "--squash", "--delete-branch"];
+    const args = ["pr", "merge", m.pr, "--squash"];
+    if (mergeMode === "auto") args.push("--auto");
+    if (!wt) args.push("--delete-branch");
     const r = execSync("gh", args);
     if (r.ok) break;
 
@@ -114,12 +120,8 @@ export async function run(argv: string[]): Promise<number> {
     return r.status ?? 1;
   }
 
-  // If we're inside a chi-managed worktree, the cleanup story is different:
-  // `git checkout <base>` here would fail (base is checked out in the main
-  // repo) and we don't want to disturb the source repo's HEAD anyway — the
-  // user may be working on something else there. Just remove the worktree,
-  // drop the local branch, close the issue. The user pulls main themselves.
-  const wt = detectChiWorktree();
+  // Worktree cleanup branch: don't disturb the source repo's HEAD, and do the
+  // branch-delete dance ourselves since we dropped gh's `--delete-branch`.
   if (wt) {
     const source = wt.meta.source;
     const rm = git(["worktree", "remove", wt.worktreePath, "--force"], source);
@@ -132,6 +134,14 @@ export async function run(argv: string[]): Promise<number> {
     }
     if (git(["show-ref", "--verify", "--quiet", `refs/heads/${m.branch}`], source).ok) {
       git(["branch", "-D", m.branch], source);
+    }
+    // Delete the remote ref ourselves. In direct merge mode the merge has
+    // happened and the ref is safe to drop now. In auto mode the merge is
+    // queued; deleting the remote ref would cancel it — let GitHub's
+    // "automatically delete head branches" repo setting handle it instead
+    // (or the user, after the queued merge completes).
+    if (mergeMode === "direct") {
+      git(["push", "origin", "--delete", m.branch], source); // best-effort
     }
     git(["remote", "prune", "origin"], source); // best-effort
 
