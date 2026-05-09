@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { CHI_OS } from "../platform.js";
+import { BIN_NAME, BIN_TAG } from "../identity.js";
 import { c, kv, line, section } from "../ui.js";
 import { activeProviderName, getProvider } from "../provider/index.js";
 import {
@@ -18,9 +19,9 @@ import {
 import { commandExists, execSync } from "../spawn.js";
 import { parseFrontmatter, parseFrontmatterFile, statusBadge } from "../frontmatter.js";
 
-const HELP = `chi status — overview of the current repo and chi-cli configuration.
+const HELP = `${BIN_NAME} status — overview of the current repo and ${BIN_TAG} configuration.
 
-Usage: chi status [options]
+Usage: ${BIN_NAME} status [options]
 
 Options:
   -s, --short   only the one-line summary (no recent commits, no submodules)
@@ -276,7 +277,7 @@ export async function run(argv: string[]): Promise<number> {
   const short = first === "-s" || first === "--short";
 
   // ---- chi-cli ------------------------------------------------------------
-  section("chi-cli");
+  section(BIN_TAG);
   kv("platform", CHI_OS);
 
   const provider = getProvider();

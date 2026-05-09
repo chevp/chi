@@ -1,4 +1,5 @@
 import { loadPersistedConfig } from "./config.js";
+import { BIN_NAME } from "./identity.js";
 import * as helpCmd from "./commands/help.js";
 import * as statusCmd from "./commands/status.js";
 import * as commitCmd from "./commands/commit.js";
@@ -58,7 +59,7 @@ async function main(): Promise<number> {
         return await workflowCmd.runAlias([lookup.stem, ...rest]);
       }
       if (lookup.kind === "ambiguous") {
-        process.stderr.write(`chi: trigger '${cmd}' is declared by multiple workflows:\n`);
+        process.stderr.write(`${BIN_NAME}: trigger '${cmd}' is declared by multiple workflows:\n`);
         for (const f of lookup.files) process.stderr.write(`  - ${f}\n`);
         return 2;
       }
@@ -69,7 +70,7 @@ async function main(): Promise<number> {
 
   const runner = COMMANDS[cmd];
   if (!runner) {
-    process.stderr.write(`chi: unknown command '${cmd}'\n`);
+    process.stderr.write(`${BIN_NAME}: unknown command '${cmd}'\n`);
     await helpCmd.run([]);
     return 1;
   }
@@ -78,7 +79,7 @@ async function main(): Promise<number> {
     return await runner(rest);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`chi ${cmd}: ${msg}\n`);
+    process.stderr.write(`${BIN_NAME} ${cmd}: ${msg}\n`);
     return 1;
   }
 }
@@ -86,7 +87,7 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (err) => {
-    process.stderr.write(`chi: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`${BIN_NAME}: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   },
 );
