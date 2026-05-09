@@ -7,10 +7,7 @@ import { commandExists, execSync, execInherit } from "../spawn.js";
 import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
-import { readLine, confirmYesNo } from "../prompt.js";
-import * as workflowCmd from "./workflow.js";
-import * as shipCmd from "./ship.js";
-import { createWorktree } from "./work.js";
+import { readLine } from "../prompt.js";
 const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
 
 Usage:
@@ -447,12 +444,8 @@ Arguments:
   <issue-number>   GitHub issue number to fix (required)
   [hint...]        free-form additional context appended to the prompt
 
-Pre-flight requirements:
-  - gh installed and authenticated
-  - inside a git repository, no active flow in the source repo
-  - CHI_PROVIDER=claude-code (default), claude CLI on PATH
-  - issue-fix workflow resolvable (per-repo override at .che/workflows/issue-fix.yml,
-    or chi's built-in bundled with the CLI)
+Status: unavailable in cura-only mode — this subcommand requires the
+claude-code CLI for an interactive agentic session.
 
 After Claude exits, run \`chi ship\` and \`chi done\` from inside the
 worktree (\`chi done\` removes the worktree on merge).
@@ -486,116 +479,12 @@ Examples:
         process.stderr.write("chi issue fix: a flow is already active — run 'chi done' first\n");
         return 1;
     }
-    // R1: provider parity break — fail fast with guidance.
-    const prov = activeProviderName();
-    if (prov !== "claude-code") {
-        process.stderr.write(`chi issue fix: requires the claude-code provider (active: ${prov})\n` +
-            `  set CHI_PROVIDER=claude-code or run: chi config provider claude-code\n`);
-        return 1;
-    }
-    if (!commandExists("claude")) {
-        process.stderr.write("chi issue fix: claude CLI not on PATH (run 'chi doctor provider')\n");
-        return 1;
-    }
-    const guard = requireGh();
-    if (guard) {
-        process.stderr.write(`${guard}\n`);
-        return 1;
-    }
-    // Fetch the issue.
-    const view = execSync("gh", [
-        "issue",
-        "view",
-        opts.num,
-        "--json",
-        "title,body,labels,url",
-    ]);
-    if (!view.ok) {
-        process.stderr.write(view.stderr);
-        process.stderr.write(`chi issue fix: 'gh issue view ${opts.num}' failed\n`);
-        return 1;
-    }
-    let issue;
-    try {
-        issue = JSON.parse(view.stdout);
-    }
-    catch (err) {
-        process.stderr.write(`chi issue fix: failed to parse gh JSON: ${err instanceof Error ? err.message : String(err)}\n`);
-        return 1;
-    }
-    const branch = `fix/issue-${opts.num}`;
-    const worktreeName = `issue-${opts.num}`;
-    // Cut the worktree up-front. Branch naming preserved (`fix/issue-N`) so PR
-    // conventions / CI rules that match on `fix/` keep working. Worktree path
-    // and chi marker handled by createWorktree.
-    const wt = createWorktree(worktreeName, { base: "main", branch });
-    if (!wt.ok || !wt.path) {
-        process.stderr.write("chi issue fix: worktree creation failed\n");
-        return 1;
-    }
-    // Best-effort spin up the provider; non-fatal.
-    await providerEnsureRunning().catch(() => false);
-    // Persist the prompt to a tmp file the workflow script will feed to claude.
-    const tmp = mkdtempSync(join(tmpdir(), "chi-issue-fix-"));
-    const promptFile = join(tmp, "PROMPT.md");
-    const prompt = buildFixPrompt({ num: opts.num, branch, issue, hint: opts.hint });
-    writeFileSync(promptFile, prompt);
-    process.stdout.write(`\n${c.bold("── chi issue fix ──")}\n`);
-    process.stdout.write(`  issue:    ${c.cyan(`#${opts.num}`)} ${issue.title || ""}\n`);
-    process.stdout.write(`  branch:   ${branch}\n`);
-    process.stdout.write(`  worktree: ${wt.path}\n`);
-    process.stdout.write(`  prompt:   ${promptFile}\n`);
-    process.stdout.write(`  model:    ${getProvider().activeModel()}\n\n`);
-    // Delegate to the workflow engine. The yaml file owns the per-worktree
-    // marker write + claude launch sequence so power-users can edit it without
-    // recompiling chi.
-    const code = await workflowCmd.runAlias([
-        "issue-fix",
-        `--num=${opts.num}`,
-        `--branch=${branch}`,
-        `--prompt-file=${promptFile}`,
-        `--worktree-path=${wt.path}`,
-    ]);
-    // Leave the prompt file on disk on failure for debugging; clean on success.
-    if (code === 0) {
-        try {
-            rmSync(tmp, { recursive: true, force: true });
-        }
-        catch {
-            /* ignore */
-        }
-    }
-    else {
-        process.stderr.write(`chi issue fix: workflow exited ${code} — prompt left at ${promptFile} for inspection\n` +
-            `worktree left at ${wt.path} for inspection — 'chi work rm ${worktreeName} --force' to discard\n`);
-        return code;
-    }
-    // Claude has exited cleanly. ship/done must run from inside the worktree
-    // (the chi-flow marker is per-worktree). Offer to chain `chi ship` here by
-    // chdir-ing the chi process into the worktree before invoking it — saves
-    // the user a manual `cd` and avoids the "ran chi ship from source, got
-    // 'clean'" pitfall. `chi done` stays manual: the user typically wants CI
-    // / review to settle before merging, and `chi done` removes the worktree.
-    process.stdout.write(`\n${c.bold("── claude session ended ──")}\n`);
-    process.stdout.write(`worktree: ${c.cyan(wt.path)}\n\n`);
-    const wtDirty = git(["status", "--porcelain"], wt.path).stdout.trim() !== "";
-    const wtAhead = git(["rev-list", "--count", `main..${branch}`], wt.path).stdout.trim();
-    const hasWork = wtDirty || (wtAhead !== "" && wtAhead !== "0");
-    if (hasWork && (await confirmYesNo(`run 'chi ship' inside the worktree now? [Y/n] `))) {
-        process.chdir(wt.path);
-        const shipRc = await shipCmd.run([]);
-        if (shipRc !== 0) {
-            process.stderr.write(`\nchi issue fix: ship returned ${shipRc} — fix the issue, then run from ${wt.path}\n`);
-            return shipRc;
-        }
-        process.stdout.write(`\nnext: ${c.cyan(`cd ${wt.path} && chi done`)}   # after CI / review\n`);
-        return 0;
-    }
-    process.stdout.write("next steps:\n");
-    process.stdout.write(`  cd ${wt.path}\n`);
-    process.stdout.write("  chi ship    # commit + push, opens draft PR\n");
-    process.stdout.write("  chi done    # merges PR + removes the worktree\n");
-    return 0;
+    // chi issue fix needs an agentic CLI session (Claude Code). cura is plain
+    // text generation only, so this subcommand is unavailable in this build.
+    process.stderr.write("chi issue fix: not available in cura-only mode\n" +
+        "  this subcommand needs the claude-code CLI for an interactive\n" +
+        "  framework-driven session, which has been removed.\n");
+    return 1;
 }
 export async function run(argv) {
     const sub = argv[0];

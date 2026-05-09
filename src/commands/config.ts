@@ -9,11 +9,11 @@ import { CHI_CONFIG_FILE } from "../config.js";
 import { execInherit } from "../spawn.js";
 
 const VALID_KEYS = [
-  "provider",
-  "ollama_host",
-  "ollama_model",
+  "llm_url",
+  "llm_model",
+  "basic_auth_user",
+  "basic_auth_password",
   "max_diff_chars",
-  "force_claude_code",
 ] as const;
 type ValidKey = (typeof VALID_KEYS)[number];
 
@@ -28,22 +28,22 @@ Usage:
   chi config path               print the config file path
 
 Keys:
-  provider              ollama | claude-code | copilot   (default: claude-code)
-  ollama_host           Ollama base URL                  (default: http://localhost:11434)
-  ollama_model          Ollama model name                (default: llama3.2)
-  max_diff_chars        diff truncation length           (default: 8000)
-  force_claude_code     1 = always escalate provider_smart_generate to claude-code
+  llm_url               cura endpoint URL              (default: https://cura-llm-3j2fyuwcdq-oa.a.run.app)
+  llm_model             cura model name                (default: smollm2:135m)
+  basic_auth_user       cura basic-auth username       (REQUIRED)
+  basic_auth_password   cura basic-auth password       (REQUIRED)
+  max_diff_chars        diff truncation length         (default: 8000)
 
 Examples:
-  chi config provider claude-code
-  chi config provider ollama
-  chi config provider
+  chi config basic_auth_user my-user
+  chi config basic_auth_password my-secret
+  chi config llm_model smollm2:135m
 
 Notes:
   Settings are saved to ${CHI_CONFIG_FILE}.
   Explicit env vars still win, so a one-off
-    CHI_PROVIDER=claude-code chi commit
-  overrides whatever 'chi config provider' was set to.
+    BASIC_AUTH_USER=u BASIC_AUTH_PASSWORD=p chi commit
+  overrides whatever was saved here.
 `;
 
 function isValidKey(s: string): s is ValidKey {
@@ -52,19 +52,14 @@ function isValidKey(s: string): s is ValidKey {
 
 function validateValue(key: ValidKey, value: string): string | null {
   switch (key) {
-    case "provider":
-      if (!["ollama", "claude-code", "copilot"].includes(value)) {
-        return `chi config: invalid provider '${value}' (valid: ollama, claude-code, copilot)`;
-      }
-      return null;
-    case "force_claude_code":
-      if (value !== "0" && value !== "1") {
-        return "chi config: force_claude_code must be 0 or 1";
-      }
-      return null;
     case "max_diff_chars":
       if (!/^\d+$/.test(value)) {
         return "chi config: max_diff_chars must be a positive integer";
+      }
+      return null;
+    case "llm_url":
+      if (!/^https?:\/\//.test(value)) {
+        return "chi config: llm_url must start with http:// or https://";
       }
       return null;
     default:

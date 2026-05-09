@@ -6,16 +6,16 @@ export const CHI_CONFIG_FILE: string =
   process.env.CHI_CONFIG_FILE ?? join(homedir(), ".chi", "config");
 
 const KEY_TO_ENV: Record<string, string> = {
-  provider: "CHI_PROVIDER",
-  ollama_host: "CHI_OLLAMA_HOST",
-  ollama_model: "CHI_OLLAMA_MODEL",
+  llm_url: "CHI_LLM_URL",
+  llm_model: "CHI_LLM_MODEL",
+  basic_auth_user: "BASIC_AUTH_USER",
+  basic_auth_password: "BASIC_AUTH_PASSWORD",
   max_diff_chars: "CHI_MAX_DIFF_CHARS",
-  force_claude_code: "CHI_FORCE_CLAUDE_CODE",
 };
 
 /**
- * Mirrors lib/che/config_load.sh: only sets a CHI_* var when it isn't already
- * present in the environment, so explicit env > saved config > built-in default.
+ * Loads ~/.chi/config. Existing env vars win over the file (explicit env >
+ * saved config > built-in default).
  */
 export function loadPersistedConfig(): void {
   if (!existsSync(CHI_CONFIG_FILE)) return;

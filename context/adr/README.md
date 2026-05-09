@@ -12,4 +12,4 @@ One file per decision: `ADR-NNN-<short-title>.md`. Use [the framework template](
 | [ADR-005](ADR-005-bundled-workflow-fallback.md) | Bundled workflow fallback | Accepted |
 | [ADR-006](ADR-006-worktree-parallelization.md) | Worktrees as the parallelism primitive | Accepted |
 
-When you add a new ADR, also append a row above and a `adr-accepted` line in [../../governance-log.md](../../governance-log.md) once approved.
+When you add a new ADR, also append a row to the index above once approved.

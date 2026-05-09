@@ -9,5 +9,3 @@ This directory holds the persistent artifacts of the chevp-ai-framework lifecycl
 | [guidelines/](guidelines/) | Project-specific tightening of framework rules |
 | [plans/](plans/) | CTX / EXP / PRD plans, organised by lifecycle status |
 | [specs/](specs/) | Feature specifications produced during Exploration |
-
-Append-only governance events (gate transitions, approvals, overrides) live in [../governance-log.md](../governance-log.md), not here.

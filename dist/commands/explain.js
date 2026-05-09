@@ -15,8 +15,8 @@ Usage:
 Where the log lives:
   <repo>/.git/chi-last-error.log   (one per repo)
 
-Provider is the same one used by chi commit (CHI_PROVIDER, default: claude-code).
-Run 'chi doctor provider' to verify the provider is reachable.
+Uses the cura LLM endpoint (BASIC_AUTH_USER / BASIC_AUTH_PASSWORD required).
+Run 'chi doctor cura' to verify the endpoint is reachable.
 `;
 export async function run(argv) {
     let mode = "explain";

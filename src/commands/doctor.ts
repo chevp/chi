@@ -1,11 +1,8 @@
 import { c } from "../ui.js";
 import { CHI_OS } from "../platform.js";
-import {
-  activeProviderName,
-  getProvider,
-} from "../provider/index.js";
-import { commandExists, execAsync, execSync } from "../spawn.js";
-import { ollamaProvider, startOllamaServer } from "../provider/ollama.js";
+import { activeProviderName, getProvider } from "../provider/index.js";
+import { commandExists, execSync } from "../spawn.js";
+import { curaProvider } from "../provider/cura.js";
 
 const HELP = `chi doctor — verify dependencies and external services.
 
@@ -14,12 +11,9 @@ Usage: chi doctor [target]
 Targets:
   all          run all checks (default)
   git          git installation
-  docker       docker installation and daemon
-  ollama       ollama binary, server reachability, configured model
-  claude-code  Claude Code CLI ('claude' binary) — used as escalation target
-  copilot      GitHub Copilot CLI ('copilot' binary)
+  cura         cura LLM endpoint reachability + configured model
   workflow     prerequisites for chi workflow / chi run (none — built-in)
-  provider     only the currently selected provider (CHI_PROVIDER, default: claude-code)
+  provider     short-form alias for 'cura'
 `;
 
 function ok(msg: string): void {
@@ -96,163 +90,42 @@ function gitCheck(): boolean {
   return okAll;
 }
 
-function dockerInstallHint(): void {
-  switch (CHI_OS) {
-    case "darwin":
-      info("install: brew install --cask docker");
-      break;
-    case "windows":
-      info(
-        "install: winget install Docker.DockerDesktop  (or https://www.docker.com/products/docker-desktop/)",
-      );
-      break;
-    case "wsl":
-    case "linux":
-      info("install: https://docs.docker.com/engine/install/");
-      break;
-    default:
-      info("install: https://www.docker.com/get-started/");
-  }
-  info("docs:    https://docs.docker.com/get-started/");
-}
+async function curaCheck(): Promise<boolean> {
+  let okAll = true;
+  const url = process.env.CHI_LLM_URL ?? "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
 
-function dockerStartHint(): void {
-  switch (CHI_OS) {
-    case "darwin":
-      info("start it: open -a Docker");
-      break;
-    case "windows":
-      info("start Docker Desktop from the Start menu");
-      break;
-    case "wsl":
-      info("ensure Docker Desktop's WSL integration is enabled");
-      break;
-    case "linux":
-      info("start it: sudo systemctl start docker");
-      break;
-    default:
-      break;
-  }
-}
-
-async function dockerCheck(): Promise<boolean> {
-  if (!commandExists("docker")) {
-    fail("docker not installed");
-    dockerInstallHint();
+  if (process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASSWORD) {
+    ok("basic-auth credentials present (BASIC_AUTH_USER / BASIC_AUTH_PASSWORD)");
+  } else {
+    fail("BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must be set");
+    info("export BASIC_AUTH_USER=<user>");
+    info("export BASIC_AUTH_PASSWORD=<password>");
+    info("or persist them in ~/.chi/config (basic_auth_user / basic_auth_password)");
     return false;
   }
-  const ver = execSync("docker", ["--version"]).stdout.trim().split(/\s+/)[2]?.replace(/,$/, "") ?? "?";
-  ok(`docker installed (${ver})`);
-  // `docker info` blocks indefinitely when the daemon socket is reachable but
-  // unresponsive (Docker Desktop launching, stuck VM). spawnSync's timeout
-  // sends SIGTERM which docker can ignore, so use execAsync — its timeout
-  // escalates to SIGKILL.
-  const probe = await execAsync("docker", ["info"], { timeoutMs: 5000 });
-  if (probe.ok) {
-    ok("docker daemon is running");
-    return true;
-  }
-  if (probe.status === null) {
-    fail("docker daemon not responding (timed out after 5s)");
-  } else {
-    fail("docker daemon not running");
-  }
-  dockerStartHint();
-  return false;
-}
 
-function ollamaInstallHint(): void {
-  switch (CHI_OS) {
-    case "darwin":
-      info("install: brew install ollama");
-      break;
-    case "windows":
-      info("install: https://ollama.com/download/windows");
-      break;
-    case "wsl":
-    case "linux":
-      info("install: curl -fsSL https://ollama.com/install.sh | sh");
-      break;
-    default:
-      info("install: https://ollama.com/download");
+  if (await curaProvider.ping()) {
+    ok(`endpoint responding at ${url}`);
+  } else {
+    fail(`endpoint not reachable at ${url}`);
+    info("check network and credentials");
+    return false;
   }
-  info("guide:   https://chevp.github.io/cura-llm-local/  (5-min local setup)");
-}
 
-async function ollamaCheck(): Promise<boolean> {
-  let okAll = true;
-  if (commandExists("ollama")) {
-    ok("ollama binary found");
-  } else {
-    fail("ollama binary not found");
-    ollamaInstallHint();
-    okAll = false;
-  }
-  const host = process.env.CHI_OLLAMA_HOST ?? "http://localhost:11434";
-  if (await ollamaProvider.ping()) {
-    ok(`server responding at ${host}`);
-  } else {
-    info(`no response at ${host} — starting 'ollama serve' in the background…`);
-    if (await startOllamaServer(10)) {
-      ok(`server started at ${host}`);
-    } else {
-      fail(`could not reach ${host} after starting 'ollama serve'`);
-      info("start it manually in another terminal: ollama serve");
-      return false;
-    }
-  }
-  const model = process.env.CHI_OLLAMA_MODEL ?? "llama3.2";
-  if (await ollamaProvider.hasModel(model)) {
+  const model = curaProvider.activeModel();
+  if (await curaProvider.hasModel(model)) {
     ok(`model available: ${model}`);
   } else {
-    fail(`model not pulled: ${model}`);
-    info(`pull it: chi init  (or: ollama pull ${model})`);
+    fail(`model not available: ${model}`);
+    info(`see ${url}/api/tags for the model list, then set CHI_LLM_MODEL`);
     okAll = false;
   }
   return okAll;
 }
 
-function claudeCodeCheck(): boolean {
-  if (!commandExists("claude")) {
-    fail("claude CLI not on PATH");
-    info("install: https://docs.claude.com/claude-code");
-    return false;
-  }
-  const ver = execSync("claude", ["--version"]).stdout.split(/\r?\n/)[0] ?? "";
-  ok(`claude CLI found${ver ? ` (${ver})` : ""}`);
-  return true;
-}
-
-function copilotCheck(): boolean {
-  if (!commandExists("copilot")) {
-    fail("copilot CLI not on PATH");
-    info(
-      "install: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli",
-    );
-    return false;
-  }
-  const ver = execSync("copilot", ["--version"]).stdout.split(/\r?\n/)[0] ?? "";
-  ok(`copilot CLI found${ver ? ` (${ver})` : ""}`);
-  return true;
-}
-
 function workflowCheck(): boolean {
-  // chi has a built-in YAML parser, no Python/PyYAML needed (unlike che).
   ok("workflow loader (built-in YAML parser, no extra deps)");
   return true;
-}
-
-async function activeProviderCheck(): Promise<boolean> {
-  const p = activeProviderName();
-  process.stdout.write(`active provider: ${p} (model: ${getProvider(p).activeModel()})\n`);
-  switch (p) {
-    case "ollama":
-      return ollamaCheck();
-    case "claude-code":
-      return claudeCodeCheck();
-    case "copilot":
-      return copilotCheck();
-  }
 }
 
 async function runSection(name: string, fn: () => boolean | Promise<boolean>): Promise<void> {
@@ -270,23 +143,12 @@ export async function run(argv: string[]): Promise<number> {
     case "git":
       await runSection("git", gitCheck);
       return 0;
-    case "docker":
-      await runSection("docker", dockerCheck);
-      return 0;
-    case "ollama":
-      await runSection("ollama", ollamaCheck);
-      return 0;
-    case "claude-code":
-      await runSection("claude-code", claudeCodeCheck);
-      return 0;
-    case "copilot":
-      await runSection("copilot", copilotCheck);
+    case "cura":
+    case "provider":
+      await runSection("cura", curaCheck);
       return 0;
     case "workflow":
       await runSection("workflow", workflowCheck);
-      return 0;
-    case "provider":
-      await runSection("provider", activeProviderCheck);
       return 0;
     case "-h":
     case "--help":
@@ -300,10 +162,7 @@ export async function run(argv: string[]): Promise<number> {
         `active provider: ${activeProviderName()} (model: ${getProvider().activeModel()})\n\n`,
       );
       await runSection("git", gitCheck);
-      await runSection("docker", dockerCheck);
-      await runSection("ollama", ollamaCheck);
-      await runSection("claude-code", claudeCodeCheck);
-      await runSection("copilot", copilotCheck);
+      await runSection("cura", curaCheck);
       await runSection("workflow", workflowCheck);
       process.stdout.write("shell deps:\n");
       for (const bin of ["curl", "bash"]) {
@@ -314,9 +173,7 @@ export async function run(argv: string[]): Promise<number> {
     }
     default:
       process.stderr.write(`chi doctor: unknown target '${target}'\n`);
-      process.stderr.write(
-        "valid: all, git, docker, ollama, claude-code, copilot, workflow, provider\n",
-      );
+      process.stderr.write("valid: all, git, cura, workflow, provider\n");
       return 1;
   }
 }

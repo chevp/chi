@@ -1,14 +1,5 @@
 # CLAUDE.md — chi
 
-## Before Writing Code
-
-Reads, greps and explanations are always free. Before you **create, edit or delete** any file:
-1. Load the framework:
-   @url https://chevp.github.io/chevp-ai-framework/chevp-ai-framework.md
-2. Announce the inferred lifecycle step (Context / Exploration / Production)
-
-> Note: The 3-step lifecycle applies per task, not per project. Every change starts at Context.
-
 ## What Is This Project?
 
 `chi` is a Node.js / TypeScript port of [che-cli](https://github.com/chevp/che-cli) — a small developer CLI that wraps git workflows and AI provider calls (Claude Code, Copilot, Ollama). Same UX as `che`, no runtime dependencies, hand-rolled command dispatch.
@@ -34,7 +25,6 @@ Key decisions are recorded in [context/adr/](context/adr/).
 | [context/guidelines/](context/guidelines/) | Development guidelines (project-specific tightening) |
 | [context/plans/](context/plans/) | CTX / EXP / PRD plans (`finished/`, `proposals/`) |
 | [context/specs/](context/specs/) | Feature specifications |
-| [governance-log.md](governance-log.md) | Append-only gate-transition / approval log |
 
 ## Build Commands
 

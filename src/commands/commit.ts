@@ -23,11 +23,14 @@ Options:
   -e, --edit      open editor to tweak the message before committing
   -h, --help      show this help
 
-Environment:
-  CHI_PROVIDER             claude-code (default) | ollama | copilot
-  CHI_OLLAMA_HOST/MODEL    Ollama config
+Environment (required):
+  BASIC_AUTH_USER          basic-auth username for the cura endpoint
+  BASIC_AUTH_PASSWORD      basic-auth password for the cura endpoint
+
+Environment (optional):
+  CHI_LLM_URL              override default cura URL
+  CHI_LLM_MODEL            override default model (default: smollm2:135m)
   CHI_MAX_DIFF_CHARS       diff truncation (default: 8000)
-  CHI_FORCE_CLAUDE_CODE=1  always escalate to claude-code
 `;
 
 interface CommitOpts {
