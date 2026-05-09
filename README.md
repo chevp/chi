@@ -39,6 +39,16 @@ Flags: `--help` / `-AssumeYes` for unattended runs; `PREFIX=~/.local ./install.s
 
 For iterative hacking without rebuilding: `npm run dev -- <cmd>`.
 
+## Update
+
+Once installed, chi can update itself — works for both global and from-source installs:
+
+```sh
+chi update
+```
+
+It detects the install layout and either runs `npm install -g github:chevp/chi` (global) or `git pull --ff-only && npm install` (workspace clone, with the `prepare` hook rebuilding `dist/`).
+
 ## Configuration
 
 Persistent defaults live in `~/.chi/config`; environment variables override.

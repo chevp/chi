@@ -9,6 +9,7 @@ import * as issueCmd from "./commands/issue.js";
 import * as explainCmd from "./commands/explain.js";
 import * as initCmd from "./commands/init.js";
 import * as reinstallCmd from "./commands/reinstall.js";
+import * as updateCmd from "./commands/update.js";
 import * as configCmd from "./commands/config.js";
 import * as doctorCmd from "./commands/doctor.js";
 import * as workflowCmd from "./commands/workflow.js";
@@ -24,6 +25,7 @@ const COMMANDS = {
     explain: explainCmd.run,
     init: initCmd.run,
     reinstall: reinstallCmd.run,
+    update: updateCmd.run,
     config: configCmd.run,
     doctor: doctorCmd.run,
     workflow: workflowCmd.run,
