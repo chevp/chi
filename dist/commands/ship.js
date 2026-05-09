@@ -7,7 +7,6 @@ import { c } from "../ui.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
 import { listActiveChiFlows } from "./work.js";
-import { checkForUpdate } from "../self-update.js";
 const HELP = `chi ship — for this repo and every submodule (recursively):
   init if missing, fast-forward pull if on a branch, then add + commit + push.
 
@@ -127,7 +126,6 @@ export async function run(argv) {
             const ahead = git(["log", `origin/${base}..${m.branch}`, "--oneline"]).stdout.trim();
             if (!ahead) {
                 process.stderr.write(`chi ship: no commits on '${m.branch}' beyond '${base}' yet — skipping PR creation\n`);
-                checkForUpdate();
                 return 0;
             }
             const createArgs = ["pr", "create", "--draft", "--base", base, "--head", m.branch];
@@ -170,7 +168,6 @@ export async function run(argv) {
         else {
             process.stdout.write(`\n→ updated PR #${m.pr}\n`);
         }
-        checkForUpdate();
         return 0;
     }
     // --- detached HEAD recovery before deciding clean/dirty ---
@@ -229,7 +226,6 @@ export async function run(argv) {
                 process.stdout.write(`    ${c.dim("→")} cd ${f.worktreePath} && chi ship\n`);
             }
         }
-        checkForUpdate();
         return 0;
     }
     process.stdout.write(`\n── repo: ${basename(repoRoot)} ──\n`);
@@ -241,8 +237,6 @@ export async function run(argv) {
         process.stdout.write("chi ship: still in detached HEAD, committing without push\n");
         rc = await commitRun(["--yes"]);
     }
-    if (rc === 0)
-        checkForUpdate();
     return rc;
 }
 //# sourceMappingURL=ship.js.map

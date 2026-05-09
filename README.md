@@ -22,7 +22,7 @@ Requires Node 20+.
 npm install -g github:chevp/chi
 ```
 
-The `prepare` script builds at install time; `chi` is placed on PATH via npm's global bin.
+Installs the prebuilt `dist/` from the github tarball and places `chi` on PATH via npm's global bin.
 
 ### From a local clone (development)
 
@@ -47,7 +47,7 @@ Once installed, chi can update itself — works for both global and from-source 
 chi update
 ```
 
-It detects the install layout and either runs `npm install -g github:chevp/chi` (global) or `git pull --ff-only && npm install` (workspace clone, with the `prepare` hook rebuilding `dist/`).
+It detects the install layout and either runs `npm install -g github:chevp/chi` (global) or `git pull --ff-only && npm install` (workspace clone — the pulled commit is expected to ship a fresh `dist/`).
 
 ## Configuration
 
