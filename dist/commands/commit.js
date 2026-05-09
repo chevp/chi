@@ -75,10 +75,27 @@ function buildPrompt(diff) {
         "- Each bullet should be concise (max ~100 characters) and focus on what changed and why.",
         "- Skip the body only if the change is trivial (e.g. typo fix, single-line tweak).",
         "- If multiple unrelated changes, the title summarizes the dominant one; bullets cover the rest.",
+        '- Never narrate yourself or the task. Forbidden openings: "I will", "I\'ll", "I\'ve", "Here is", "Here\'s", "Below is", "Sure", "Okay", "Let me", "Let\'s", "This", "That", "These", "Those", "The diff", "The changes", "The code", "The provided", "The following".',
+        '- Do not reference the prompt input. Forbidden phrases: "the diff", "the provided code", "the code example", "the attached", "the following code", "the original code".',
+        "- Never echo source code lines from the diff as the title or body. Describe the change, do not paste it.",
         "",
         "Diff:",
         diff,
     ].join("\n");
+}
+const META_TITLE_RE = /^\s*(i\b|i'?ll\b|i'?m\b|i'?ve\b|we\b|here\b|here'?s\b|below\b|sure\b|okay\b|ok\b|let\b|let'?s\b|this\b|that\b|these\b|those\b|first\b|now\b|alright\b|response\b|summary\b|in\s+summary\b|to\s+summarize\b|the\s+(diff|change|changes|code|provided|following|patch|file|files|original)\b)/i;
+const ECHOED_CODE_RE = /^\s*(import\s|export\s|class\s+\w|function\s+\w|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|def\s+\w|public\s|private\s|return\s|if\s*\(|<\w)/;
+const META_REFERENCE_RE = /\b(provided\s+code|code\s+example|the\s+diff|the\s+code|attached|the\s+following\s+code|original\s+code)\b/i;
+function looksLikeMeta(title) {
+    if (!title)
+        return false;
+    if (META_TITLE_RE.test(title))
+        return true;
+    if (ECHOED_CODE_RE.test(title))
+        return true;
+    if (META_REFERENCE_RE.test(title))
+        return true;
+    return false;
 }
 /** Light cleanup of small-model output: strip code fences, ATX headers, **bold**,
  *  '* ' bullets normalized to '- ', drop leading blank lines and trailing blank
@@ -103,6 +120,10 @@ function cleanupMessage(raw) {
         return "";
     // strip leading whitespace + matched surrounding quotes from title
     stripped[0] = (stripped[0] ?? "").replace(/^\s+/, "").replace(/^["']|["']$/g, "");
+    // reject meta-responses ("I will...", "Here is...", echoed source code) so
+    // the caller falls back to fallbackMessage().
+    if (looksLikeMeta(stripped[0] ?? ""))
+        return "";
     // enforce blank line between subject and body
     if (stripped.length > 1 && stripped[1].trim() !== "") {
         stripped.splice(1, 0, "");
