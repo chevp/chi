@@ -1,8 +1,9 @@
 import { c } from "../ui.js";
 import { CHI_OS } from "../platform.js";
-import { activeProviderName, getProvider } from "../provider/index.js";
+import { activeProviderName, getProvider, providerEnsureRunning, } from "../provider/index.js";
 import { commandExists, execSync } from "../spawn.js";
 import { curaProvider } from "../provider/cura.js";
+import { ollamaProvider } from "../provider/ollama.js";
 import { BIN_NAME } from "../identity.js";
 const HELP = `${BIN_NAME} doctor — verify dependencies and external services.
 
@@ -11,9 +12,10 @@ Usage: ${BIN_NAME} doctor [target]
 Targets:
   all          run all checks (default)
   git          git installation
+  ollama       local ollama endpoint reachability + available models
   cura         cura LLM endpoint reachability + configured model
   workflow     prerequisites for ${BIN_NAME} workflow / ${BIN_NAME} run (none — built-in)
-  provider     short-form alias for 'cura'
+  provider     summary of the active provider (auto-selected: ollama → cura)
 `;
 function ok(msg) {
     process.stdout.write(`  ${msg}\n`);
@@ -87,6 +89,25 @@ function gitCheck() {
     }
     return okAll;
 }
+async function ollamaCheck() {
+    const url = process.env.CHI_OLLAMA_URL ?? "http://localhost:11434";
+    if (!(await ollamaProvider.ping())) {
+        fail(`endpoint not reachable at ${url}`);
+        info("start ollama with: ollama serve");
+        info("or set CHI_OLLAMA_URL to point at a remote ollama");
+        return false;
+    }
+    ok(`endpoint responding at ${url}`);
+    const model = ollamaProvider.activeModel();
+    if (model && model !== "(detecting)") {
+        ok(`model selected: ${model}  (first entry from /api/tags)`);
+    }
+    else {
+        fail("no models available — pull one with: ollama pull <model>");
+        return false;
+    }
+    return true;
+}
 async function curaCheck() {
     let okAll = true;
     const url = process.env.CHI_LLM_URL ?? "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
@@ -138,10 +159,17 @@ export async function run(argv) {
         case "git":
             await runSection("git", gitCheck);
             return 0;
+        case "ollama":
+            await runSection("ollama", ollamaCheck);
+            return 0;
         case "cura":
-        case "provider":
             await runSection("cura", curaCheck);
             return 0;
+        case "provider": {
+            await providerEnsureRunning().catch(() => false);
+            process.stdout.write(`active provider: ${activeProviderName()} (model: ${getProvider().activeModel()})\n`);
+            return 0;
+        }
         case "workflow":
             await runSection("workflow", workflowCheck);
             return 0;
@@ -153,8 +181,10 @@ export async function run(argv) {
         case "":
         case undefined: {
             process.stdout.write(`platform: ${CHI_OS}\n`);
+            await providerEnsureRunning().catch(() => false);
             process.stdout.write(`active provider: ${activeProviderName()} (model: ${getProvider().activeModel()})\n\n`);
             await runSection("git", gitCheck);
+            await runSection("ollama", ollamaCheck);
             await runSection("cura", curaCheck);
             await runSection("workflow", workflowCheck);
             process.stdout.write("shell deps:\n");
@@ -168,7 +198,7 @@ export async function run(argv) {
         }
         default:
             process.stderr.write(`chi doctor: unknown target '${target}'\n`);
-            process.stderr.write("valid: all, git, cura, workflow, provider\n");
+            process.stderr.write("valid: all, git, ollama, cura, workflow, provider\n");
             return 1;
     }
 }

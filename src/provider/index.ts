@@ -1,5 +1,6 @@
 import type { Provider, ProviderName } from "./types.js";
 import { curaProvider } from "./cura.js";
+import { ollamaProvider } from "./ollama.js";
 
 class Semaphore {
   private slots: number;
@@ -31,26 +32,51 @@ function providerSemaphore(): Semaphore {
   return providerSem;
 }
 
-export function activeProviderName(): ProviderName {
-  return "cura";
+let selected: Provider | null = null;
+let detection: Promise<Provider> | null = null;
+
+/**
+ * Picks the first reachable provider in priority order: local ollama → cura.
+ * Cached for the lifetime of the process; concurrent callers share the same
+ * in-flight detection promise.
+ */
+async function detect(): Promise<Provider> {
+  if (selected) return selected;
+  if (detection) return detection;
+  detection = (async () => {
+    if (await ollamaProvider.ping()) {
+      selected = ollamaProvider;
+    } else {
+      selected = curaProvider;
+    }
+    return selected;
+  })();
+  return detection;
 }
 
-export function getProvider(_name: ProviderName = "cura"): Provider {
-  return curaProvider;
+export function activeProviderName(): ProviderName {
+  return selected?.name ?? "cura";
+}
+
+export function getProvider(name?: ProviderName): Provider {
+  if (name === "ollama") return ollamaProvider;
+  if (name === "cura") return curaProvider;
+  return selected ?? curaProvider;
 }
 
 /**
- * Pings the cura endpoint. Cura is a hosted Ollama on Cloud Run, so there
- * is nothing to start locally — we just probe reachability.
+ * Selects the active provider (local ollama if reachable, otherwise cura)
+ * and pings it. The selection is cached for the rest of the process.
  */
 export async function providerEnsureRunning(): Promise<boolean> {
-  return curaProvider.ping();
+  const p = await detect();
+  return p.ping();
 }
 
 export interface SmartGenerateOptions {
   /**
    * Marks the request as complex. Retained for API compatibility; ignored
-   * in cura-only mode (single small model handles everything).
+   * because both backends expose a single small model.
    */
   complex?: boolean;
 }
@@ -59,10 +85,11 @@ export async function providerSmartGenerate(
   prompt: string,
   _opts: SmartGenerateOptions = {},
 ): Promise<string> {
+  const p = await detect();
   const sem = providerSemaphore();
   await sem.acquire();
   try {
-    return await curaProvider.generate(prompt);
+    return await p.generate(prompt);
   } finally {
     sem.release();
   }

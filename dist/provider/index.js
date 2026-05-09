@@ -1,4 +1,5 @@
 import { curaProvider } from "./cura.js";
+import { ollamaProvider } from "./ollama.js";
 class Semaphore {
     slots;
     waiters = [];
@@ -30,24 +31,53 @@ function providerSemaphore() {
     providerSem = new Semaphore(slots);
     return providerSem;
 }
-export function activeProviderName() {
-    return "cura";
+let selected = null;
+let detection = null;
+/**
+ * Picks the first reachable provider in priority order: local ollama → cura.
+ * Cached for the lifetime of the process; concurrent callers share the same
+ * in-flight detection promise.
+ */
+async function detect() {
+    if (selected)
+        return selected;
+    if (detection)
+        return detection;
+    detection = (async () => {
+        if (await ollamaProvider.ping()) {
+            selected = ollamaProvider;
+        }
+        else {
+            selected = curaProvider;
+        }
+        return selected;
+    })();
+    return detection;
 }
-export function getProvider(_name = "cura") {
-    return curaProvider;
+export function activeProviderName() {
+    return selected?.name ?? "cura";
+}
+export function getProvider(name) {
+    if (name === "ollama")
+        return ollamaProvider;
+    if (name === "cura")
+        return curaProvider;
+    return selected ?? curaProvider;
 }
 /**
- * Pings the cura endpoint. Cura is a hosted Ollama on Cloud Run, so there
- * is nothing to start locally — we just probe reachability.
+ * Selects the active provider (local ollama if reachable, otherwise cura)
+ * and pings it. The selection is cached for the rest of the process.
  */
 export async function providerEnsureRunning() {
-    return curaProvider.ping();
+    const p = await detect();
+    return p.ping();
 }
 export async function providerSmartGenerate(prompt, _opts = {}) {
+    const p = await detect();
     const sem = providerSemaphore();
     await sem.acquire();
     try {
-        return await curaProvider.generate(prompt);
+        return await p.generate(prompt);
     }
     finally {
         sem.release();

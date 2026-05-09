@@ -1,8 +1,8 @@
-import { commandExists, execAsync } from "../spawn.js";
-const HOST = () => process.env.CHI_OLLAMA_HOST ?? "http://localhost:11434";
-const MODEL = () => process.env.CHI_OLLAMA_MODEL ?? "llama3.2";
+const DEFAULT_URL = "http://localhost:11434";
+const URL_BASE = () => (process.env.CHI_OLLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, "");
+let cachedModel = null;
 async function fetchWithTimeout(url, init = {}) {
-    const { timeoutMs = 2000, ...rest } = init;
+    const { timeoutMs = 1500, ...rest } = init;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
@@ -12,61 +12,57 @@ async function fetchWithTimeout(url, init = {}) {
         clearTimeout(timer);
     }
 }
-/**
- * If the server is already responding, returns true immediately. Otherwise
- * spawns `ollama serve` in the background and waits up to `timeoutSec`.
- */
-export async function startOllamaServer(timeoutSec = 10) {
-    if (await ollamaProvider.ping())
-        return true;
-    if (!commandExists("ollama"))
-        return false;
-    const detached = process.platform !== "win32";
-    // Fire-and-forget. We do not await — we poll for readiness below.
-    void execAsync("ollama", ["serve"], { ...(detached ? { env: process.env } : {}) });
-    for (let i = 0; i < timeoutSec; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        if (await ollamaProvider.ping())
-            return true;
-    }
-    return false;
+async function listModels(timeoutMs = 1500) {
+    const r = await fetchWithTimeout(`${URL_BASE()}/api/tags`, { timeoutMs });
+    if (!r.ok)
+        return [];
+    const data = (await r.json());
+    return (data.models ?? []).map((m) => m.name ?? "").filter((n) => n.length > 0);
 }
 export const ollamaProvider = {
     name: "ollama",
     activeModel() {
-        return MODEL();
+        return cachedModel ?? "(detecting)";
     },
     async ping() {
         try {
-            const r = await fetchWithTimeout(`${HOST()}/api/tags`, { timeoutMs: 2000 });
-            return r.ok;
+            const models = await listModels();
+            if (models.length === 0)
+                return false;
+            cachedModel = models[0] ?? null;
+            return cachedModel !== null;
         }
         catch {
             return false;
         }
     },
-    async hasModel(model = MODEL()) {
+    async hasModel(model) {
         try {
-            const r = await fetchWithTimeout(`${HOST()}/api/tags`, { timeoutMs: 2000 });
-            if (!r.ok)
-                return false;
-            const data = (await r.json());
-            const list = data.models ?? [];
-            return list.some((m) => (m.name ?? "").startsWith(model));
+            const models = await listModels();
+            if (model === undefined)
+                return models.length > 0;
+            return models.some((n) => n.startsWith(model));
         }
         catch {
             return false;
         }
     },
     async generate(prompt) {
-        const payload = JSON.stringify({ model: MODEL(), prompt, stream: false });
-        const r = await fetch(`${HOST()}/api/generate`, {
+        if (!cachedModel) {
+            const models = await listModels(5000);
+            if (models.length === 0) {
+                throw new Error("ollama: no models available at /api/tags");
+            }
+            cachedModel = models[0] ?? null;
+        }
+        const r = await fetch(`${URL_BASE()}/api/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: payload,
+            body: JSON.stringify({ model: cachedModel, prompt, stream: false }),
         });
         if (!r.ok) {
-            throw new Error(`ollama generate failed: HTTP ${r.status}`);
+            const body = await r.text().catch(() => "");
+            throw new Error(`ollama generate failed: HTTP ${r.status}${body ? ` — ${body.slice(0, 200)}` : ""}`);
         }
         const data = (await r.json());
         return data.response ?? "";

@@ -1,4 +1,4 @@
-export type ProviderName = "cura";
+export type ProviderName = "ollama" | "cura";
 
 export interface Provider {
   readonly name: ProviderName;
