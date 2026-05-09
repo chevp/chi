@@ -1,27 +1,17 @@
 # chi
 
-A Node.js port of [che-cli](https://github.com/chevp/che-cli). Same UX,
-TypeScript implementation, hand-rolled command dispatch (no commander/yargs),
-no runtime dependencies.
-
-> **Status:** Full command-set ported. See [Porting status](#porting-status)
-> for the per-command mapping.
+Node.js / TypeScript port of [che-cli](https://github.com/chevp/che-cli) — a small developer CLI that wraps git workflows and AI provider calls (Claude Code, Copilot, Ollama). Hand-rolled command dispatch, no runtime dependencies.
 
 ```sh
 $ chi status
 
 chi-cli
-  platform           windows
-  provider           claude-code (model: claude-code (CLI-managed))
-  reachable          yes
-
+  platform           darwin
+  provider           claude-code
 git
   repo               chi
   branch             main
   state              clean
-
-recent commits
-  1a2b3c4 initial scaffold (1 minute ago)
 ```
 
 ## Install
@@ -29,45 +19,29 @@ recent commits
 Requires Node 20+.
 
 ```sh
+npm install -g github:chevp/chi
+```
+
+The `prepare` script builds at install time; `chi` is placed on PATH via npm's global bin.
+
+### From a local clone (development)
+
+The bundled installer symlinks your workspace into `~/.local/bin`, so rebuilds propagate without reinstalling:
+
+```sh
 git clone https://github.com/chevp/chi.git
 cd chi
 ./install.sh        # macOS / Linux / WSL
+.\install.ps1       # Windows PowerShell
 ```
 
-On Windows (PowerShell):
+Flags: `--help` / `-AssumeYes` for unattended runs; `PREFIX=~/.local ./install.sh` to override the install location.
 
-```powershell
-git clone https://github.com/chevp/chi.git
-cd chi
-.\install.ps1
-```
-
-Both scripts run `npm install && npm run build`, then wire `chi` onto your
-PATH. Pass `--help` (bash) or `-AssumeYes` (PowerShell) for unattended use.
-You can override the install prefix with `PREFIX=~/.local ./install.sh`.
-
-### Manual install
-
-```sh
-git clone https://github.com/chevp/chi.git
-cd chi
-npm install
-npm run build
-npm link        # makes `chi` available on PATH
-```
-
-### Development
-
-For iterative development without rebuilding:
-
-```sh
-npm run dev -- status
-```
+For iterative hacking without rebuilding: `npm run dev -- <cmd>`.
 
 ## Configuration
 
-Runtime config is read from environment variables, with persistent defaults
-stored in `~/.chi/config` (overridden by explicit env vars).
+Persistent defaults live in `~/.chi/config`; environment variables override.
 
 | Variable                | Default                  |
 |-------------------------|--------------------------|
@@ -78,96 +52,10 @@ stored in `~/.chi/config` (overridden by explicit env vars).
 | `CHI_FORCE_CLAUDE_CODE` | unset                    |
 | `CHI_CONFIG_FILE`       | `~/.chi/config`          |
 
-## Project layout
+## Architecture
 
-```
-chi/
-├── bin/
-│   ├── chi              # node shim → dist/index.js
-│   └── chi.cmd          # Windows shim
-├── src/
-│   ├── index.ts         # dispatcher (workflow trigger lookup → built-ins)
-│   ├── platform.ts      # OS detection (darwin/windows/wsl/linux)
-│   ├── ui.ts            # ANSI colors + section/kv printers
-│   ├── config.ts        # ~/.chi/config loader (env-var precedence)
-│   ├── spawn.ts         # child_process helpers (sync/async, inherit-stdio)
-│   ├── prompt.ts        # readline / yes-no helpers (TTY-aware)
-│   ├── spinner.ts       # braille spinner (TTY-only, silent in CI)
-│   ├── frontmatter.ts   # YAML frontmatter parser (status/progress badges)
-│   ├── yaml.ts          # minimal YAML parser for workflow files
-│   ├── git/
-│   │   └── index.ts     # git wrappers + push-with-recovery + error log
-│   ├── provider/
-│   │   ├── types.ts     # Provider interface
-│   │   ├── index.ts     # router + smart-generate (escalation to claude-code)
-│   │   ├── claude-code.ts
-│   │   ├── copilot.ts
-│   │   └── ollama.ts
-│   ├── workflow/
-│   │   └── loader.ts    # workflow discovery + validation + step planning
-│   └── commands/
-│       ├── help.ts
-│       ├── status.ts
-│       ├── commit.ts
-│       ├── ship.ts
-│       ├── flow.ts
-│       ├── done.ts
-│       ├── issue.ts
-│       ├── explain.ts
-│       ├── init.ts
-│       ├── reinstall.ts
-│       ├── config.ts
-│       ├── doctor.ts
-│       └── workflow.ts  # list / show / run sub-dispatcher (also: chi run)
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
-Each provider implements the same `Provider` interface (see
-[src/provider/types.ts](src/provider/types.ts#L3)) so the dispatcher can route to
-whichever is selected by `CHI_PROVIDER`.
-
-## Porting status
-
-Mapping from che-cli (shell) → chi (TS):
-
-| che-cli                              | chi                                  | Status      |
-|--------------------------------------|--------------------------------------|-------------|
-| `lib/che/platform.sh`                | `src/platform.ts`                    | ✓ done      |
-| `lib/che/config_load.sh`             | `src/config.ts`                      | ✓ done      |
-| `lib/che/provider.sh`                | `src/provider/index.ts`              | ✓ done      |
-| `lib/che/ollama/client.sh`           | `src/provider/ollama.ts`             | ✓ done      |
-| `lib/che/claude-code/client.sh`      | `src/provider/claude-code.ts`        | ✓ done      |
-| `lib/che/copilot/client.sh`          | `src/provider/copilot.ts`            | ✓ done      |
-| `lib/che/status.sh`                  | `src/commands/status.ts`             | ✓ done      |
-| `lib/che/git/commit.sh`              | `src/commands/commit.ts`             | ✓ done      |
-| `lib/che/git/ship.sh`                | `src/commands/ship.ts`               | ✓ done      |
-| `lib/che/git/flow.sh`                | `src/commands/flow.ts`               | ✓ done      |
-| `lib/che/git/done.sh`                | `src/commands/done.ts`               | ✓ done      |
-| `lib/che/git/push.sh`                | `src/git/index.ts` (`pushWithRecovery`) | ✓ done   |
-| `lib/che/git/conflicts.sh`           | —                                    | not ported (see PROP) |
-| `lib/che/git/warnings.sh`            | —                                    | not ported (see PROP) |
-| `lib/che/issue.sh`                   | `src/commands/issue.ts`              | ✓ done      |
-| (new — no che-cli equivalent)        | `chi issue fix` + `.che/workflows/issue-fix.yml` | ✓ done (PROP-008) |
-| `lib/che/explain.sh`                 | `src/commands/explain.ts`            | ✓ done      |
-| `lib/che/init.sh`                    | `src/commands/init.ts`               | ✓ done      |
-| `lib/che/workflow.sh` + workflow/    | `src/commands/workflow.ts`, `src/workflow/loader.ts` | ✓ done |
-| `lib/che/reinstall.sh`               | `src/commands/reinstall.ts`          | ✓ done      |
-| `lib/che/config.sh`                  | `src/commands/config.ts`             | ✓ done      |
-| `lib/che/doctor.sh`                  | `src/commands/doctor.ts`             | ✓ done      |
-| `lib/che/frontmatter.sh`             | `src/frontmatter.ts`                 | ✓ done      |
-| `lib/che/json.sh`                    | (replaced by native `JSON.*`)        | n/a         |
-| `lib/che/ui.sh`                      | `src/ui.ts` + `src/spinner.ts`       | ✓ done      |
-| `lib/che/workflow/yaml_get.py`       | `src/yaml.ts` (in-tree YAML parser)  | ✓ done      |
-| `install.sh` / `install.ps1`         | `install.sh` / `install.ps1`         | ✓ done (PROP-001) |
-| `self_update.sh`                     | —                                    | not ported (PROP-002) |
-
-Conflict resolution (`conflicts.sh`) and the LLM warning fixer (`warnings.sh`)
-in `chi ship` are intentionally deferred — they wrap interactive `claude`
-invocations and need careful UX work; tracked as proposals.
+Hand-rolled dispatcher in [src/index.ts](src/index.ts) routes argv to per-command files in [src/commands/](src/commands/). Each AI backend implements the same [Provider](src/provider/types.ts) interface and is selected by `CHI_PROVIDER`. See [CLAUDE.md](CLAUDE.md) for conventions and ADR pointers.
 
 ## Why "chi"?
 
-`che` minus an `e`. Three letters, pronounceable, distinct binary name from
-the existing `che` so both can coexist on the same machine during the migration.
+`che` minus an `e`. Three letters, pronounceable, distinct binary so `che` and `chi` coexist on the same machine during migration.
