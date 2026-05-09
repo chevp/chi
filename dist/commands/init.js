@@ -1,20 +1,22 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { c } from "../ui.js";
+import { CHI_CONFIG_FILE } from "../config.js";
 import { curaProvider } from "../provider/cura.js";
-const HELP = `chi init — verify the cura LLM endpoint is reachable.
+import { readLine, readSecret } from "../prompt.js";
+const HELP = `chi init — set up cura credentials and verify the endpoint.
 
 Usage: chi init [options]
 
 What it does:
-  1. checks BASIC_AUTH_USER and BASIC_AUTH_PASSWORD are set
-  2. pings the cura endpoint
-  3. confirms the configured model is available
+  1. prompts for BASIC_AUTH_USER / BASIC_AUTH_PASSWORD if not already set
+  2. saves them to ~/.chi/config (chmod 600)
+  3. pings the cura endpoint
+  4. confirms the configured model is available
 
 Options:
-  -h, --help    show this help
-
-Environment (required):
-  BASIC_AUTH_USER       basic-auth username for the cura endpoint
-  BASIC_AUTH_PASSWORD   basic-auth password for the cura endpoint
+  --force        re-prompt even if credentials are already set
+  -h, --help     show this help
 
 Environment (optional):
   CHI_LLM_URL    override the default cura URL
@@ -29,28 +31,108 @@ function fail(msg) {
 function info(msg) {
     process.stdout.write(`    ${c.dim(msg)}\n`);
 }
+function readConfigPairs() {
+    if (!existsSync(CHI_CONFIG_FILE))
+        return [];
+    const raw = readFileSync(CHI_CONFIG_FILE, "utf8");
+    const out = [];
+    for (const ln of raw.split(/\r?\n/)) {
+        const trimmed = ln.trim();
+        if (!trimmed || trimmed.startsWith("#"))
+            continue;
+        const eq = trimmed.indexOf("=");
+        if (eq < 0)
+            continue;
+        out.push({
+            key: trimmed.slice(0, eq).trim(),
+            value: trimmed.slice(eq + 1).replace(/^\s+/, ""),
+        });
+    }
+    return out;
+}
+function writeConfigPairs(pairs) {
+    mkdirSync(dirname(CHI_CONFIG_FILE), { recursive: true });
+    const body = pairs.map((p) => `${p.key}=${p.value}`).join("\n");
+    writeFileSync(CHI_CONFIG_FILE, `${body}${body ? "\n" : ""}`, { mode: 0o600 });
+}
+function upsertPairs(updates) {
+    const keep = readConfigPairs().filter((p) => !(p.key in updates));
+    const merged = [
+        ...keep,
+        ...Object.entries(updates).map(([key, value]) => ({ key, value })),
+    ];
+    writeConfigPairs(merged);
+}
+async function promptCredentials(force) {
+    const persisted = Object.fromEntries(readConfigPairs().map((p) => [p.key, p.value]));
+    const existingUser = process.env.BASIC_AUTH_USER ||
+        persisted.basic_auth_user ||
+        "";
+    const existingPassword = process.env.BASIC_AUTH_PASSWORD ||
+        persisted.basic_auth_password ||
+        "";
+    if (!force && existingUser && existingPassword) {
+        info("credentials already set — pass --force to re-prompt");
+        return { user: existingUser, password: existingPassword };
+    }
+    if (!process.stdin.isTTY) {
+        fail("not a TTY — cannot prompt for credentials");
+        info("set BASIC_AUTH_USER / BASIC_AUTH_PASSWORD in env, or run interactively");
+        return null;
+    }
+    process.stdout.write("\n");
+    const userPrompt = existingUser ? `BASIC_AUTH_USER [${existingUser}]: ` : "BASIC_AUTH_USER: ";
+    const userIn = await readLine(userPrompt);
+    const user = (userIn ?? "").trim() || existingUser;
+    if (!user) {
+        fail("BASIC_AUTH_USER is required");
+        return null;
+    }
+    const passwordIn = await readSecret("BASIC_AUTH_PASSWORD: ");
+    const password = passwordIn ?? "";
+    if (!password) {
+        if (existingPassword) {
+            info("(empty input — keeping existing password)");
+            return { user, password: existingPassword };
+        }
+        fail("BASIC_AUTH_PASSWORD is required");
+        return null;
+    }
+    return { user, password };
+}
 export async function run(argv) {
-    if (argv[0] === "-h" || argv[0] === "--help") {
-        process.stdout.write(HELP);
-        return 0;
+    let force = false;
+    for (const a of argv) {
+        if (a === "-h" || a === "--help") {
+            process.stdout.write(HELP);
+            return 0;
+        }
+        if (a === "--force") {
+            force = true;
+            continue;
+        }
+        process.stderr.write(`chi init: unknown option '${a}'\n`);
+        return 1;
     }
     const url = process.env.CHI_LLM_URL ?? "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
     const model = curaProvider.activeModel();
-    process.stdout.write(`chi init — cura (model: ${model})\n\n`);
-    if (!process.env.BASIC_AUTH_USER || !process.env.BASIC_AUTH_PASSWORD) {
-        fail("BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must be set");
-        info("export BASIC_AUTH_USER=<user>");
-        info("export BASIC_AUTH_PASSWORD=<password>");
-        info("or persist them in ~/.chi/config (basic_auth_user / basic_auth_password)");
+    process.stdout.write(`chi init — cura (model: ${model})\n`);
+    const creds = await promptCredentials(force);
+    if (!creds)
         return 1;
-    }
-    ok("basic auth credentials present");
+    upsertPairs({
+        basic_auth_user: creds.user,
+        basic_auth_password: creds.password,
+    });
+    process.env.BASIC_AUTH_USER = creds.user;
+    process.env.BASIC_AUTH_PASSWORD = creds.password;
+    ok(`saved credentials to ${CHI_CONFIG_FILE}`);
     if (await curaProvider.ping()) {
         ok(`endpoint reachable at ${url}`);
     }
     else {
         fail(`endpoint not reachable at ${url}`);
-        info("check network and credentials, then re-run 'chi init'");
+        info("check network and credentials, then re-run 'chi init --force'");
         return 1;
     }
     if (await curaProvider.hasModel(model)) {
@@ -61,7 +143,7 @@ export async function run(argv) {
         info(`set CHI_LLM_MODEL to one offered by ${url}/api/tags`);
         return 1;
     }
-    process.stdout.write("\nready. try: chi doctor\n");
+    process.stdout.write("\nready. try: chi commit\n");
     return 0;
 }
 //# sourceMappingURL=init.js.map
