@@ -76,16 +76,10 @@ async function main() {
         return 1;
     }
 }
-<<<<<<< Updated upstream
 main().then((code) => {
     process.exitCode = code;
 }, (err) => {
-    process.stderr.write(`chi: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exitCode = 1;
-=======
-main().then((code) => process.exit(code), (err) => {
     process.stderr.write(`${BIN_NAME}: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
->>>>>>> Stashed changes
+    process.exitCode = 1;
 });
 //# sourceMappingURL=index.js.map

@@ -89,12 +89,7 @@ main().then(
     process.exitCode = code;
   },
   (err) => {
-<<<<<<< Updated upstream
     process.stderr.write(`${BIN_NAME}: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-=======
-    process.stderr.write(`chi: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
->>>>>>> Stashed changes
   },
 );
