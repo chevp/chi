@@ -1,4 +1,5 @@
 import type { Provider } from "./types.js";
+import { BIN_NAME } from "../identity.js";
 
 const DEFAULT_URL = "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
 const DEFAULT_MODEL = "smollm2:135m";
@@ -12,7 +13,7 @@ function basicAuthHeader(): string {
   const password = process.env.BASIC_AUTH_PASSWORD;
   if (!user || !password) {
     throw new Error(
-      "chi: BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must be set " +
+      `${BIN_NAME}: BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must be set ` +
         "(cura-llm requires HTTP basic auth)",
     );
   }

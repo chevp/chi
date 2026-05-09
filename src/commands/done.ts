@@ -4,8 +4,9 @@ import { commandExists, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo } from "../git/index.js";
 import { readMarker } from "./flow.js";
 import { detectChiWorktree } from "./work.js";
+import { BIN_NAME } from "../identity.js";
 
-const HELP = `chi done — finish the active chi flow.
+const HELP = `${BIN_NAME} done — finish the active ${BIN_NAME} flow.
 
 Reads .git/chi-flow, then runs:
   gh pr merge <pr> --squash --auto --delete-branch
@@ -13,11 +14,11 @@ Reads .git/chi-flow, then runs:
 
 Options:
   --issue <n>   close GitHub issue #n after merge (overrides marker;
-                useful when the flow was started via 'chi flow' rather
-                than 'chi issue fix')
+                useful when the flow was started via '${BIN_NAME} flow' rather
+                than '${BIN_NAME} issue fix')
   -h, --help    show this help
 
-Aborts if there's no active flow, or no PR yet (run 'chi ship' first).
+Aborts if there's no active flow, or no PR yet (run '${BIN_NAME} ship' first).
 `;
 
 export async function run(argv: string[]): Promise<number> {
@@ -31,28 +32,28 @@ export async function run(argv: string[]): Promise<number> {
     if (a === "--issue") {
       const v = argv[++i];
       if (!v) {
-        process.stderr.write("chi done: --issue needs a value\n");
+        process.stderr.write(`${BIN_NAME} done: --issue needs a value\n`);
         return 1;
       }
       if (!/^\d+$/.test(v)) {
-        process.stderr.write(`chi done: --issue '${v}' is not a valid issue number\n`);
+        process.stderr.write(`${BIN_NAME} done: --issue '${v}' is not a valid issue number\n`);
         return 1;
       }
       issueOverride = v;
       continue;
     }
-    process.stderr.write(`chi done: unknown option '${a}'\n`);
+    process.stderr.write(`${BIN_NAME} done: unknown option '${a}'\n`);
     return 1;
   }
 
   for (const bin of ["git", "gh"]) {
     if (!commandExists(bin)) {
-      process.stderr.write(`chi done: missing dependency: ${bin} (run 'chi doctor git')\n`);
+      process.stderr.write(`${BIN_NAME} done: missing dependency: ${bin} (run '${BIN_NAME} doctor git')\n`);
       return 1;
     }
   }
   if (!isInsideRepo()) {
-    process.stderr.write("chi done: not a git repository\n");
+    process.stderr.write(`${BIN_NAME} done: not a git repository\n`);
     return 1;
   }
 
@@ -61,26 +62,26 @@ export async function run(argv: string[]): Promise<number> {
   const marker = join(dir, "chi-flow");
   if (!existsSync(marker)) {
     process.stderr.write(
-      `chi done: no active flow (${marker} missing) — run 'chi flow <branch>' first\n`,
+      `${BIN_NAME} done: no active flow (${marker} missing) — run '${BIN_NAME} flow <branch>' first\n`,
     );
     return 1;
   }
 
   const m = readMarker(marker);
   if (!m.branch) {
-    process.stderr.write("chi done: marker missing 'branch' field\n");
+    process.stderr.write(`${BIN_NAME} done: marker missing 'branch' field\n`);
     return 1;
   }
   const base = m.base || "main";
   if (!m.pr) {
-    process.stderr.write("chi done: no PR recorded yet — run 'chi ship' first to create one\n");
+    process.stderr.write(`${BIN_NAME} done: no PR recorded yet — run '${BIN_NAME} ship' first to create one\n`);
     return 1;
   }
 
   const cur = git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
   if (cur !== m.branch) {
     process.stderr.write(
-      `chi done: HEAD is on '${cur}' but flow branch is '${m.branch}' — checkout it first\n`,
+      `${BIN_NAME} done: HEAD is on '${cur}' but flow branch is '${m.branch}' — checkout it first\n`,
     );
     return 1;
   }
@@ -102,12 +103,12 @@ export async function run(argv: string[]): Promise<number> {
     if (r.ok) break;
 
     if (mergeMode === "auto" && r.stderr.includes("enablePullRequestAutoMerge")) {
-      process.stderr.write("chi done: auto-merge disabled on this repo — falling back to direct merge\n");
+      process.stderr.write(`${BIN_NAME} done: auto-merge disabled on this repo — falling back to direct merge\n`);
       mergeMode = "direct";
       continue;
     }
     if (!draftPromoted && r.stderr.includes("is still a draft")) {
-      process.stderr.write(`chi done: PR #${m.pr} is a draft — marking ready, then retrying\n`);
+      process.stderr.write(`${BIN_NAME} done: PR #${m.pr} is a draft — marking ready, then retrying\n`);
       const ready = execSync("gh", ["pr", "ready", m.pr]);
       if (!ready.ok) {
         process.stderr.write(ready.stderr);
@@ -128,7 +129,7 @@ export async function run(argv: string[]): Promise<number> {
     process.stderr.write(rm.stderr);
     if (!rm.ok) {
       process.stderr.write(
-        `chi done: 'git worktree remove' failed — clean up manually with 'git worktree prune'\n`,
+        `${BIN_NAME} done: 'git worktree remove' failed — clean up manually with 'git worktree prune'\n`,
       );
       return rm.status ?? 1;
     }

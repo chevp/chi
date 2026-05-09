@@ -4,10 +4,11 @@ import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
 import { c } from "../ui.js";
+import { BIN_NAME } from "../identity.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
 import { listActiveChiFlows } from "./work.js";
-const HELP = `chi ship — for this repo and every submodule (recursively):
+const HELP = `${BIN_NAME} ship — for this repo and every submodule (recursively):
   init if missing, fast-forward pull if on a branch, then add + commit + push.
 
 In flow mode (.git/chi-flow present): commit, push -u origin <branch>, and on
@@ -20,7 +21,7 @@ export async function run(argv) {
         return 0;
     }
     if (!isInsideRepo()) {
-        process.stderr.write("chi ship: not a git repository\n");
+        process.stderr.write(`${BIN_NAME} ship: not a git repository\n`);
         return 1;
     }
     const repoRoot = git(["rev-parse", "--show-toplevel"]).stdout.trim();
@@ -109,7 +110,7 @@ export async function run(argv) {
             return 1;
         }
         if (!commandExists("gh")) {
-            process.stderr.write("chi ship: missing dependency: gh (required in flow mode)\n");
+            process.stderr.write(`${BIN_NAME} ship: missing dependency: gh (required in flow mode)\n`);
             return 1;
         }
         const flowLabel = m.pr
@@ -234,7 +235,7 @@ export async function run(argv) {
         rc = await commitRun(["--push", "--yes"]);
     }
     else {
-        process.stdout.write("chi ship: still in detached HEAD, committing without push\n");
+        process.stdout.write(`${BIN_NAME} ship: still in detached HEAD, committing without push\n`);
         rc = await commitRun(["--yes"]);
     }
     return rc;

@@ -3,26 +3,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { c } from "../ui.js";
 import { activeProviderName, getProvider, providerEnsureRunning, providerSmartGenerate, } from "../provider/index.js";
+import { BIN_NAME } from "../identity.js";
 import { commandExists, execSync, execInherit } from "../spawn.js";
 import { git, isInsideRepo, gitDir } from "../git/index.js";
 import { parseFrontmatter, statusBadge } from "../frontmatter.js";
 import { withSpinner } from "../spinner.js";
 import { readLine } from "../prompt.js";
-const HELP = `chi issue — manage GitHub issues via gh, with AI-generated content.
+const HELP = `${BIN_NAME} issue — manage GitHub issues via gh, with AI-generated content.
 
 Usage:
-  chi issue [create] [description]    open a new issue (LLM drafts title/body)
-  chi issue list [--limit N]          list open issues for the current repo
-  chi issue close <n> [--reason R]    close issue #n
-  chi issue fix <n> [hint]            cut fix branch + start framework-driven Claude session
-  chi issue -h | --help               show this help
+  ${BIN_NAME} issue [create] [description]    open a new issue (LLM drafts title/body)
+  ${BIN_NAME} issue list [--limit N]          list open issues for the current repo
+  ${BIN_NAME} issue close <n> [--reason R]    close issue #n
+  ${BIN_NAME} issue fix <n> [hint]            cut fix branch + start framework-driven Claude session
+  ${BIN_NAME} issue -h | --help               show this help
 `;
 function requireGh() {
     if (!commandExists("gh")) {
-        return "chi issue: missing dependency: gh — run 'chi doctor git'";
+        return `${BIN_NAME} issue: missing dependency: gh — run '${BIN_NAME} doctor git'`;
     }
     if (!execSync("gh", ["auth", "status"]).ok) {
-        return "chi issue: gh not authenticated — run 'gh auth login'";
+        return `${BIN_NAME} issue: gh not authenticated — run 'gh auth login'`;
     }
     return null;
 }
@@ -33,17 +34,17 @@ async function cmdList(argv) {
         if (a === "--limit") {
             const v = argv[++i];
             if (!v) {
-                process.stderr.write("chi issue list: --limit needs a value\n");
+                process.stderr.write(`${BIN_NAME} issue list: --limit needs a value\n`);
                 return 1;
             }
             limit = Number.parseInt(v, 10) || 10;
         }
         else if (a === "-h" || a === "--help") {
-            process.stdout.write("Usage: chi issue list [--limit N]\n");
+            process.stdout.write(`Usage: ${BIN_NAME} issue list [--limit N]\n`);
             return 0;
         }
         else {
-            process.stderr.write(`chi issue list: unknown option '${a}'\n`);
+            process.stderr.write(`${BIN_NAME} issue list: unknown option '${a}'\n`);
             return 1;
         }
     }
@@ -65,7 +66,7 @@ async function cmdList(argv) {
         '.[] | "\\(.number)\\t\\(.title)\\t\\([.labels[].name]|join(","))\\t\\([.assignees[].login]|join(","))\\t\\(.body|@base64)"',
     ]);
     if (!r.ok) {
-        process.stderr.write("chi issue list: 'gh issue list' failed — is this a GitHub repo?\n");
+        process.stderr.write(`${BIN_NAME} issue list: 'gh issue list' failed — is this a GitHub repo?\n`);
         return 1;
     }
     const rows = r.stdout.trim();
@@ -109,7 +110,7 @@ async function cmdClose(argv) {
             return 0;
         }
         else if (a.startsWith("-")) {
-            process.stderr.write(`chi issue close: unknown option '${a}'\n`);
+            process.stderr.write(`${BIN_NAME} issue close: unknown option '${a}'\n`);
             return 1;
         }
         else {
@@ -117,7 +118,7 @@ async function cmdClose(argv) {
         }
     }
     if (!num) {
-        process.stderr.write("chi issue close: issue number required\n");
+        process.stderr.write(`${BIN_NAME} issue close: issue number required\n`);
         return 1;
     }
     const guard = requireGh();
@@ -178,7 +179,7 @@ function parseCreate(argv) {
                 break;
             default:
                 if (a.startsWith("-"))
-                    return { error: `chi issue create: unknown option '${a}'` };
+                    return { error: `${BIN_NAME} issue create: unknown option '${a}'` };
                 desc.push(a);
                 break;
         }
@@ -210,7 +211,7 @@ Options:
         return 1;
     }
     if (!isInsideRepo()) {
-        process.stderr.write("chi issue create: not a git repository\n");
+        process.stderr.write(`${BIN_NAME} issue create: not a git repository\n`);
         return 1;
     }
     const hints = buildHints();
@@ -265,7 +266,7 @@ ${seed}`;
     }
     catch (err) {
         process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-        process.stderr.write("chi issue: LLM draft failed — run 'chi doctor provider' for diagnostics\n");
+        process.stderr.write(`${BIN_NAME} issue: LLM draft failed — run '${BIN_NAME} doctor provider' for diagnostics\n`);
         return 1;
     }
     // Trim leading + trailing blank lines.
@@ -275,7 +276,7 @@ ${seed}`;
     while (lines.length && (lines[lines.length - 1] ?? "").trim() === "")
         lines.pop();
     if (lines.length === 0) {
-        process.stderr.write("chi issue: LLM returned an empty title — aborting\n");
+        process.stderr.write(`${BIN_NAME} issue: LLM returned an empty title — aborting\n`);
         return 1;
     }
     const first = (lines[0] ?? "").trim();
@@ -294,7 +295,7 @@ ${seed}`;
         lines.shift();
     let body = lines.join("\n");
     if (!title) {
-        process.stderr.write("chi issue: LLM returned an empty title — aborting\n");
+        process.stderr.write(`${BIN_NAME} issue: LLM returned an empty title — aborting\n`);
         return 1;
     }
     process.stdout.write(`\n${c.bold("Title:")} ${title}\n`);
@@ -348,7 +349,7 @@ ${seed}`;
     const r = execSync("gh", args);
     if (!r.ok) {
         process.stderr.write(r.stderr);
-        process.stderr.write("chi issue: gh issue create failed\n");
+        process.stderr.write(`${BIN_NAME} issue: gh issue create failed\n`);
         return r.status ?? 1;
     }
     process.stdout.write(`${c.green("→ opened:")} ${r.stdout.trim()}\n`);
@@ -366,7 +367,7 @@ function parseFix(argv) {
             break;
         }
         if (a.startsWith("-"))
-            return { error: `chi issue fix: unknown option '${a}'` };
+            return { error: `${BIN_NAME} issue fix: unknown option '${a}'` };
         if (!o.num) {
             o.num = a;
         }
@@ -462,26 +463,26 @@ Examples:
     }
     const opts = parsed;
     if (!opts.num) {
-        process.stderr.write("chi issue fix: issue number required\n");
+        process.stderr.write(`${BIN_NAME} issue fix: issue number required\n`);
         return 1;
     }
     if (!/^\d+$/.test(opts.num)) {
-        process.stderr.write(`chi issue fix: '${opts.num}' is not a valid issue number\n`);
+        process.stderr.write(`${BIN_NAME} issue fix: '${opts.num}' is not a valid issue number\n`);
         return 1;
     }
     // R2: fail before the network call if a flow is already active.
     if (!isInsideRepo()) {
-        process.stderr.write("chi issue fix: not a git repository\n");
+        process.stderr.write(`${BIN_NAME} issue fix: not a git repository\n`);
         return 1;
     }
     const dir = gitDir();
     if (dir && existsSync(join(dir, "chi-flow"))) {
-        process.stderr.write("chi issue fix: a flow is already active — run 'chi done' first\n");
+        process.stderr.write(`${BIN_NAME} issue fix: a flow is already active — run '${BIN_NAME} done' first\n`);
         return 1;
     }
     // chi issue fix needs an agentic CLI session (Claude Code). cura is plain
     // text generation only, so this subcommand is unavailable in this build.
-    process.stderr.write("chi issue fix: not available in cura-only mode\n" +
+    process.stderr.write(`${BIN_NAME} issue fix: not available in cura-only mode\n` +
         "  this subcommand needs the claude-code CLI for an interactive\n" +
         "  framework-driven session, which has been removed.\n");
     return 1;
@@ -505,7 +506,7 @@ export async function run(argv) {
             // Guard: reject args that look like unknown subcommands.
             const known = new Set(["create", "list", "close", "fix"]);
             if (sub && /^[a-z][\w-]*$/i.test(sub) && !known.has(sub.toLowerCase())) {
-                process.stderr.write(`chi issue: unknown subcommand '${sub}'\n`);
+                process.stderr.write(`${BIN_NAME} issue: unknown subcommand '${sub}'\n`);
                 process.stderr.write(HELP);
                 return 1;
             }

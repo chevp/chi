@@ -3,15 +3,16 @@ import { CHI_OS } from "../platform.js";
 import { activeProviderName, getProvider } from "../provider/index.js";
 import { commandExists, execSync } from "../spawn.js";
 import { curaProvider } from "../provider/cura.js";
-const HELP = `chi doctor — verify dependencies and external services.
+import { BIN_NAME } from "../identity.js";
+const HELP = `${BIN_NAME} doctor — verify dependencies and external services.
 
-Usage: chi doctor [target]
+Usage: ${BIN_NAME} doctor [target]
 
 Targets:
   all          run all checks (default)
   git          git installation
   cura         cura LLM endpoint reachability + configured model
-  workflow     prerequisites for chi workflow / chi run (none — built-in)
+  workflow     prerequisites for ${BIN_NAME} workflow / ${BIN_NAME} run (none — built-in)
   provider     short-form alias for 'cura'
 `;
 function ok(msg) {

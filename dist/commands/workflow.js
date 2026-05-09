@@ -5,14 +5,15 @@ import { createInputs, findWorkflowsDir, inputDecls, loadFile, planSteps, resolv
 import { getPath } from "../yaml.js";
 import { execInherit } from "../spawn.js";
 import { existsSync } from "node:fs";
-const HELP = `chi workflow — manage and run scripted workflows from .che/workflows/*.yml
+import { BIN_NAME } from "../identity.js";
+const HELP = `${BIN_NAME} workflow — manage and run scripted workflows from .che/workflows/*.yml
 
-Usage: chi workflow <subcommand> [args]
+Usage: ${BIN_NAME} workflow <subcommand> [args]
 
 Subcommands:
   list                       list workflows in the current repo
   show <name>                print the parsed plan of a workflow
-  run  <name> [--k=v ...]    execute a workflow (also: chi run <name>)
+  run  <name> [--k=v ...]    execute a workflow (also: ${BIN_NAME} run <name>)
 
 A workflow is a YAML manifest that references existing scripts. Each step
 declares 'script:' (an executable path relative to the workflow root) and
@@ -21,7 +22,7 @@ optional 'args:' with \${input} substitution. No inline bash.
 function cmdList() {
     const where = findWorkflowsDir();
     if (!where) {
-        process.stderr.write(`chi workflow: no .che/workflows/ found above ${process.cwd()}\n`);
+        process.stderr.write(`${BIN_NAME} workflow: no .che/workflows/ found above ${process.cwd()}\n`);
         return 1;
     }
     const entries = readdirSync(where.dir).filter((e) => /\.(ya?ml)$/.test(e));
@@ -67,7 +68,7 @@ function cmdShow(argv) {
     }
     const name = argv[0];
     if (argv.length > 1) {
-        process.stderr.write("chi workflow show: unexpected extra arguments\n");
+        process.stderr.write(`${BIN_NAME} workflow show: unexpected extra arguments\n`);
         return 1;
     }
     let resolved;
@@ -76,7 +77,7 @@ function cmdShow(argv) {
         validate(resolved.doc, resolved.file);
     }
     catch (err) {
-        process.stderr.write(`chi workflow: ${err.message}\n`);
+        process.stderr.write(`${BIN_NAME} workflow: ${err.message}\n`);
         return 1;
     }
     const { doc, file, root } = resolved;
@@ -176,11 +177,11 @@ Options:
         return 0;
     }
     if ("error" in parsed) {
-        process.stderr.write(`chi workflow: ${parsed.error}\n`);
+        process.stderr.write(`${BIN_NAME} workflow: ${parsed.error}\n`);
         return 1;
     }
     if (!parsed.name) {
-        process.stderr.write("chi workflow run: missing workflow name\n");
+        process.stderr.write(`${BIN_NAME} workflow run: missing workflow name\n`);
         return 1;
     }
     let resolved;
@@ -189,7 +190,7 @@ Options:
         validate(resolved.doc, resolved.file);
     }
     catch (err) {
-        process.stderr.write(`chi workflow: ${err.message}\n`);
+        process.stderr.write(`${BIN_NAME} workflow: ${err.message}\n`);
         return 1;
     }
     const inputs = createInputs();
@@ -202,7 +203,7 @@ Options:
             missing.push(decl.name);
     }
     if (missing.length > 0) {
-        process.stderr.write(`chi workflow: missing required input(s): ${missing.join(" ")}\n`);
+        process.stderr.write(`${BIN_NAME} workflow: missing required input(s): ${missing.join(" ")}\n`);
         process.stderr.write(`  pass them as --${missing[0]}=value\n`);
         return 1;
     }
@@ -267,7 +268,7 @@ export async function run(argv) {
             process.stdout.write(HELP);
             return sub === "" ? 1 : 0;
         default:
-            process.stderr.write(`chi workflow: unknown subcommand '${sub}'\n`);
+            process.stderr.write(`${BIN_NAME} workflow: unknown subcommand '${sub}'\n`);
             process.stderr.write(HELP);
             return 1;
     }

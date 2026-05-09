@@ -291,7 +291,7 @@ export async function run(argv: string[]): Promise<number> {
     "reachable",
     reachable
       ? c.green("yes")
-      : `${c.red("no")} ${c.dim("— run 'chi doctor provider'")}`,
+      : `${c.red("no")} ${c.dim(`— run '${BIN_NAME} doctor provider'`)}`,
   );
 
   const envSet: Array<[string, string]> = [];

@@ -1,14 +1,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { CHI_OS } from "../platform.js";
+import { BIN_NAME, BIN_TAG } from "../identity.js";
 import { c, kv, line, section } from "../ui.js";
 import { activeProviderName, getProvider } from "../provider/index.js";
 import { aheadBehind, currentBranch, git, isInsideRepo, porcelain, recentCommits, repoRoot, shortStatus, submoduleStatusRecursive, upstreamRef, } from "../git/index.js";
 import { commandExists, execSync } from "../spawn.js";
 import { parseFrontmatter, parseFrontmatterFile, statusBadge } from "../frontmatter.js";
-const HELP = `chi status — overview of the current repo and chi-cli configuration.
+const HELP = `${BIN_NAME} status — overview of the current repo and ${BIN_TAG} configuration.
 
-Usage: chi status [options]
+Usage: ${BIN_NAME} status [options]
 
 Options:
   -s, --short   only the one-line summary (no recent commits, no submodules)
@@ -232,14 +233,14 @@ export async function run(argv) {
     }
     const short = first === "-s" || first === "--short";
     // ---- chi-cli ------------------------------------------------------------
-    section("chi-cli");
+    section(BIN_TAG);
     kv("platform", CHI_OS);
     const provider = getProvider();
     kv("provider", `${activeProviderName()} ${c.dim(`(model: ${provider.activeModel()})`)}`);
     const reachable = await provider.ping();
     kv("reachable", reachable
         ? c.green("yes")
-        : `${c.red("no")} ${c.dim("— run 'chi doctor provider'")}`);
+        : `${c.red("no")} ${c.dim(`— run '${BIN_NAME} doctor provider'`)}`);
     const envSet = [];
     for (const v of [
         "CHI_LLM_URL",

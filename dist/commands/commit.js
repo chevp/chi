@@ -6,9 +6,10 @@ import { execInherit } from "../spawn.js";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const HELP = `chi commit — stage all changes, generate a commit message via the active LLM, commit.
+import { BIN_NAME } from "../identity.js";
+const HELP = `${BIN_NAME} commit — stage all changes, generate a commit message via the active LLM, commit.
 
-Usage: chi commit [options]
+Usage: ${BIN_NAME} commit [options]
 
 Options:
   -p, --push      push after commit
@@ -50,7 +51,7 @@ function parseArgs(argv) {
             case "--help":
                 return { help: true };
             default:
-                return { error: `chi commit: unknown option '${arg}'` };
+                return { error: `${BIN_NAME} commit: unknown option '${arg}'` };
         }
     }
     return opts;
@@ -127,7 +128,7 @@ export async function run(argv) {
     }
     const opts = parsed;
     if (!isInsideRepo()) {
-        process.stderr.write("chi commit: not a git repository\n");
+        process.stderr.write(`${BIN_NAME} commit: not a git repository\n`);
         return 1;
     }
     const add = git(["add", "-A"]);
@@ -140,7 +141,7 @@ export async function run(argv) {
     const diffRes = git(["diff", "--cached", "--no-color"]);
     let diff = diffRes.stdout;
     if (!diff) {
-        process.stderr.write("chi commit: nothing staged, nothing to commit\n");
+        process.stderr.write(`${BIN_NAME} commit: nothing staged, nothing to commit\n`);
         return 0;
     }
     const max = Number.parseInt(process.env.CHI_MAX_DIFF_CHARS ?? "8000", 10) || 8000;
@@ -155,13 +156,13 @@ export async function run(argv) {
         const raw = await withSpinner(`thinking via ${activeProviderName()} (${provider.activeModel()})`, () => providerSmartGenerate(prompt));
         msg = cleanupMessage(raw);
         if (!msg) {
-            process.stderr.write("chi commit: LLM returned empty message — using default message\n");
+            process.stderr.write(`${BIN_NAME} commit: LLM returned empty message — using default message\n`);
         }
     }
     catch (err) {
         process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-        process.stderr.write("chi commit: message generation failed — using default message\n" +
-            "             run 'chi doctor provider' for diagnostics\n");
+        process.stderr.write(`${BIN_NAME} commit: message generation failed — using default message\n` +
+            `             run '${BIN_NAME} doctor provider' for diagnostics\n`);
     }
     if (!msg)
         msg = fallbackMessage();

@@ -1,14 +1,15 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execInherit } from "../spawn.js";
+import { BIN_NAME } from "../identity.js";
 
-const HELP = `chi update — update chi itself.
+const HELP = `${BIN_NAME} update — update ${BIN_NAME} itself.
 
-Usage: chi update
+Usage: ${BIN_NAME} update
 
-Detects how chi was installed and refreshes it in place:
-  - workspace clone (bin/chi resolves into a git repo): git pull --ff-only,
-    then npm install (the prepare hook rebuilds dist/).
+Detects how ${BIN_NAME} was installed and refreshes it in place:
+  - workspace clone (bin resolves into a git repo): git pull --ff-only,
+    then npm install.
   - npm global install: npm install -g github:chevp/chi.
 
 Local uncommitted changes are preserved — git pull will fail rather than
@@ -36,19 +37,19 @@ export async function run(argv: string[]): Promise<number> {
   const realBin = realpathSync(process.argv[1] ?? "");
   const root = findPackageRoot(dirname(realBin));
   if (!root) {
-    process.stderr.write(`chi update: could not locate the chi package root from ${realBin}\n`);
+    process.stderr.write(`${BIN_NAME} update: could not locate the chi package root from ${realBin}\n`);
     return 1;
   }
 
   const isWorkspace = existsSync(join(root, ".git"));
 
   if (isWorkspace) {
-    process.stdout.write(`chi update: workspace clone at ${root}\n`);
+    process.stdout.write(`${BIN_NAME} update: workspace clone at ${root}\n`);
     const pulled = await execInherit("git", ["-C", root, "pull", "--ff-only"]);
     if (pulled !== 0) return pulled;
     return execInherit("npm", ["--prefix", root, "install", "--no-audit", "--no-fund"]);
   }
 
-  process.stdout.write(`chi update: global install (${REMOTE})\n`);
+  process.stdout.write(`${BIN_NAME} update: global install (${REMOTE})\n`);
   return execInherit("npm", ["install", "-g", REMOTE]);
 }

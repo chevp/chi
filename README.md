@@ -134,6 +134,9 @@ Persistent settings live in `~/.chi/config` (managed by `chi init` and `chi conf
 | `llm_model`            | `CHI_LLM_MODEL`       | `smollm2:135m`                                       |
 | `max_diff_chars`       | `CHI_MAX_DIFF_CHARS`  | `8000`                                               |
 | —                      | `CHI_CONFIG_FILE`     | `~/.chi/config`                                      |
+| —                      | `CHI_INVOKED_AS`      | basename of `argv[1]` (e.g. `chi`, `jan`, `che`)     |
+
+`CHI_INVOKED_AS` lets a wrapper present chi under a different name — help text, status header, and error prefixes all switch to that name. Auto-detected from `argv[1]`, so the [chevp/jan-cli](https://github.com/chevp/jan-cli) wrapper picks up `jan` automatically without setting it.
 
 ## Architecture
 

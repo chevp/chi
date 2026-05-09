@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { c } from "../ui.js";
+import { BIN_NAME, BIN_TAG } from "../identity.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
 export function git(args, cwd) {
     const opts = {
@@ -100,7 +101,7 @@ export function recordError(cmd, exitCode, output, cwd) {
     const status = git(["status", "-sb"], cwd).stdout || "";
     const log = git(["log", "-5", "--oneline"], cwd).stdout || "";
     const remote = git(["remote", "-v"], cwd).stdout || "";
-    const body = `chi-cli error log\n` +
+    const body = `${BIN_TAG} error log\n` +
         `timestamp: ${ts}\n` +
         `command:   ${cmd}\n` +
         `exit:      ${exitCode ?? "?"}\n` +
@@ -139,11 +140,11 @@ export async function pushWithRecovery(opts = {}) {
     if (!rejected) {
         process.stderr.write(out);
         recordError(cmd, first.status, out, cwd);
-        process.stderr.write(`\n${c.red(`chi ship: push failed (exit ${first.status ?? "?"})`)}\n` +
-            `run ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+        process.stderr.write(`\n${c.red(`${BIN_NAME} ship: push failed (exit ${first.status ?? "?"})`)}\n` +
+            `run ${c.dim(`${BIN_NAME} explain`)} for an LLM-assisted diagnosis\n`);
         return first.status ?? 1;
     }
-    process.stderr.write(`${c.dim("chi ship: remote moved — pulling --rebase, retrying push")}\n`);
+    process.stderr.write(`${c.dim(`${BIN_NAME} ship: remote moved — pulling --rebase, retrying push`)}\n`);
     const rebase = git(["pull", "--rebase"], cwd);
     if (!rebase.ok) {
         process.stderr.write(out);
@@ -157,14 +158,14 @@ export async function pushWithRecovery(opts = {}) {
             const rc = finalizeRebase(repoPath, result);
             if (rc !== 0) {
                 recordError(`${cmd} → pull --rebase conflicts`, rebase.status, rebase.stderr || rebase.stdout, cwd);
-                process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+                process.stderr.write(`\nrun ${c.dim(`${BIN_NAME} explain`)} for an LLM-assisted diagnosis\n`);
                 return rc;
             }
             // Resolution succeeded — fall through to retry push
         }
         else {
             recordError(`${cmd} → pull --rebase failed`, rebase.status, rebase.stderr || rebase.stdout, cwd);
-            process.stderr.write(`\nrun ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+            process.stderr.write(`\nrun ${c.dim(`${BIN_NAME} explain`)} for an LLM-assisted diagnosis\n`);
             return rebase.status ?? 1;
         }
     }
@@ -177,8 +178,8 @@ export async function pushWithRecovery(opts = {}) {
     const retryOut = retry.stderr || retry.stdout;
     process.stderr.write(retryOut);
     recordError(`${cmd} (after pull --rebase)`, retry.status, retryOut, cwd);
-    process.stderr.write(`\n${c.red("chi ship: push still failing after one retry")}\n` +
-        `run ${c.dim("chi explain")} for an LLM-assisted diagnosis\n`);
+    process.stderr.write(`\n${c.red(`${BIN_NAME} ship: push still failing after one retry`)}\n` +
+        `run ${c.dim(`${BIN_NAME} explain`)} for an LLM-assisted diagnosis\n`);
     return retry.status ?? 1;
 }
 //# sourceMappingURL=index.js.map

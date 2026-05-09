@@ -4,6 +4,7 @@ import { git } from "./git/index.js";
 import { execSync, execAsync, commandExists } from "./spawn.js";
 import { singleKeyMenu } from "./menu.js";
 import { c } from "./ui.js";
+import { BIN_NAME } from "./identity.js";
 
 export interface ResolveResult {
   resolved: number;
@@ -34,14 +35,14 @@ export async function resolveConflicts(repoRoot: string): Promise<ResolveResult>
 
   // TTY required for interactive menu
   if (!process.stdin.isTTY) {
-    process.stderr.write(c.dim("chi ship: non-interactive terminal — skipping conflict resolver\n"));
+    process.stderr.write(c.dim(`${BIN_NAME} ship: non-interactive terminal — skipping conflict resolver\n`));
     return bail;
   }
 
   // claude must be available
   if (!commandExists("claude")) {
     process.stderr.write(
-      c.yellow("chi ship: 'claude' not found on PATH — cannot auto-resolve conflicts\n"),
+      c.yellow(`${BIN_NAME} ship: 'claude' not found on PATH — cannot auto-resolve conflicts\n`),
     );
     return bail;
   }
@@ -51,7 +52,7 @@ export async function resolveConflicts(repoRoot: string): Promise<ResolveResult>
 
   const files = conflictOutput.split(/\r?\n/).filter(Boolean);
   process.stderr.write(
-    `\n${c.bold("chi ship: conflict resolver")} — ${files.length} file(s)\n\n`,
+    `\n${c.bold(`${BIN_NAME} ship: conflict resolver`)} — ${files.length} file(s)\n\n`,
   );
 
   // Get incoming commit context for the prompt
@@ -176,7 +177,7 @@ export function finalizeRebase(repoRoot: string, result: ResolveResult): number 
         ),
       );
     } else {
-      process.stderr.write(c.red("chi ship: conflict resolution aborted — rebase aborted\n"));
+      process.stderr.write(c.red(`${BIN_NAME} ship: conflict resolution aborted — rebase aborted\n`));
     }
     return 1;
   }
@@ -185,7 +186,7 @@ export function finalizeRebase(repoRoot: string, result: ResolveResult): number 
   const cont = git(["-C", repoRoot, "rebase", "--continue"]);
   if (!cont.ok) {
     process.stderr.write(cont.stderr);
-    process.stderr.write(c.red("chi ship: rebase --continue failed after resolution\n"));
+    process.stderr.write(c.red(`${BIN_NAME} ship: rebase --continue failed after resolution\n`));
     git(["-C", repoRoot, "rebase", "--abort"]);
     return 1;
   }

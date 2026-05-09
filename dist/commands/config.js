@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, } from "node:fs";
 import { dirname } from "node:path";
 import { CHI_CONFIG_FILE } from "../config.js";
 import { execInherit } from "../spawn.js";
+import { BIN_NAME } from "../identity.js";
 const VALID_KEYS = [
     "llm_url",
     "llm_model",
@@ -9,15 +10,15 @@ const VALID_KEYS = [
     "basic_auth_password",
     "max_diff_chars",
 ];
-const HELP = `chi config — view or change persistent settings.
+const HELP = `${BIN_NAME} config — view or change persistent settings.
 
 Usage:
-  chi config                    list saved settings
-  chi config <key>              show saved value for <key>
-  chi config <key> <value>      set <key> (validates known keys)
-  chi config --unset <key>      remove <key> from saved settings
-  chi config edit               open the config file in $EDITOR
-  chi config path               print the config file path
+  ${BIN_NAME} config                    list saved settings
+  ${BIN_NAME} config <key>              show saved value for <key>
+  ${BIN_NAME} config <key> <value>      set <key> (validates known keys)
+  ${BIN_NAME} config --unset <key>      remove <key> from saved settings
+  ${BIN_NAME} config edit               open the config file in $EDITOR
+  ${BIN_NAME} config path               print the config file path
 
 Keys:
   llm_url               cura endpoint URL              (default: https://cura-llm-3j2fyuwcdq-oa.a.run.app)
@@ -27,14 +28,14 @@ Keys:
   max_diff_chars        diff truncation length         (default: 8000)
 
 Examples:
-  chi config basic_auth_user my-user
-  chi config basic_auth_password my-secret
-  chi config llm_model smollm2:135m
+  ${BIN_NAME} config basic_auth_user my-user
+  ${BIN_NAME} config basic_auth_password my-secret
+  ${BIN_NAME} config llm_model smollm2:135m
 
 Notes:
   Settings are saved to ${CHI_CONFIG_FILE}.
   Explicit env vars still win, so a one-off
-    BASIC_AUTH_USER=u BASIC_AUTH_PASSWORD=p chi commit
+    BASIC_AUTH_USER=u BASIC_AUTH_PASSWORD=p ${BIN_NAME} commit
   overrides whatever was saved here.
 `;
 function isValidKey(s) {
@@ -44,12 +45,12 @@ function validateValue(key, value) {
     switch (key) {
         case "max_diff_chars":
             if (!/^\d+$/.test(value)) {
-                return "chi config: max_diff_chars must be a positive integer";
+                return `${BIN_NAME} config: max_diff_chars must be a positive integer`;
             }
             return null;
         case "llm_url":
             if (!/^https?:\/\//.test(value)) {
-                return "chi config: llm_url must start with http:// or https://";
+                return `${BIN_NAME} config: llm_url must start with http:// or https://`;
             }
             return null;
         default:
@@ -135,11 +136,11 @@ export async function run(argv) {
         case "--unset": {
             const k = rest[0];
             if (!k) {
-                process.stderr.write("chi config: --unset requires a key\n");
+                process.stderr.write(`${BIN_NAME} config: --unset requires a key\n`);
                 return 1;
             }
             if (!isValidKey(k)) {
-                process.stderr.write(`chi config: unknown key '${k}' (run 'chi config --help')\n`);
+                process.stderr.write(`${BIN_NAME} config: unknown key '${k}' (run '${BIN_NAME} config --help')\n`);
                 return 1;
             }
             unsetValue(k);
@@ -148,7 +149,7 @@ export async function run(argv) {
         }
         default: {
             if (!isValidKey(cmd)) {
-                process.stderr.write(`chi config: unknown key '${cmd}' (run 'chi config --help')\n`);
+                process.stderr.write(`${BIN_NAME} config: unknown key '${cmd}' (run '${BIN_NAME} config --help')\n`);
                 return 1;
             }
             if (rest.length === 0) {
@@ -157,7 +158,7 @@ export async function run(argv) {
                     process.stdout.write(`${v}\n`);
                 }
                 else {
-                    process.stdout.write("(unset — using default; see 'chi status' for active value)\n");
+                    process.stdout.write(`(unset — using default; see '${BIN_NAME} status' for active value)\n`);
                 }
                 return 0;
             }

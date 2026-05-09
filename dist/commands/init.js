@@ -3,10 +3,11 @@ import { dirname } from "node:path";
 import { c } from "../ui.js";
 import { CHI_CONFIG_FILE } from "../config.js";
 import { curaProvider } from "../provider/cura.js";
+import { BIN_NAME } from "../identity.js";
 import { readLine, readSecret } from "../prompt.js";
-const HELP = `chi init — set up cura credentials and verify the endpoint.
+const HELP = `${BIN_NAME} init — set up cura credentials and verify the endpoint.
 
-Usage: chi init [options]
+Usage: ${BIN_NAME} init [options]
 
 What it does:
   1. prompts for BASIC_AUTH_USER / BASIC_AUTH_PASSWORD if not already set
@@ -132,7 +133,7 @@ export async function run(argv) {
     }
     else {
         fail(`endpoint not reachable at ${url}`);
-        info("check network and credentials, then re-run 'chi init --force'");
+        info(`check network and credentials, then re-run '${BIN_NAME} init --force'`);
         return 1;
     }
     if (await curaProvider.hasModel(model)) {

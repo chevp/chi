@@ -3,15 +3,16 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { c } from "../ui.js";
 import { commandExists } from "../spawn.js";
 import { git, isInsideRepo, repoRoot } from "../git/index.js";
-const HELP = `chi work — manage parallel git worktrees.
+import { BIN_NAME } from "../identity.js";
+const HELP = `${BIN_NAME} work — manage parallel git worktrees.
 
 Usage:
-  chi work <name> [--base <branch>]   create a worktree at ../<repo>-<name>
+  ${BIN_NAME} work <name> [--base <branch>]   create a worktree at ../<repo>-<name>
                                        on branch chi/<name>
-  chi work list                        list chi-managed worktrees
-  chi work rm [<name>] [--force]       remove worktree (current if no name)
-  chi work cd <name>                   print path of worktree (for shell aliases)
-  chi work -h | --help                 show this help
+  ${BIN_NAME} work list                        list chi-managed worktrees
+  ${BIN_NAME} work rm [<name>] [--force]       remove worktree (current if no name)
+  ${BIN_NAME} work cd <name>                   print path of worktree (for shell aliases)
+  ${BIN_NAME} work -h | --help                 show this help
 
 Env:
   CHI_WORKTREE_ROOT            override parent dir for new worktrees
@@ -198,13 +199,13 @@ export function detectChiWorktree() {
  */
 export function createWorktree(name, opts = {}) {
     if (!/^[A-Za-z0-9._-]+$/.test(name)) {
-        const error = `chi work: invalid name '${name}' — use [A-Za-z0-9._-]`;
+        const error = `${BIN_NAME} work: invalid name '${name}' — use [A-Za-z0-9._-]`;
         process.stderr.write(`${error}\n`);
         return { ok: false, error };
     }
     const root = repoRoot();
     if (!root) {
-        const error = "chi work: cannot resolve repo root";
+        const error = `${BIN_NAME} work: cannot resolve repo root`;
         process.stderr.write(`${error}\n`);
         return { ok: false, error };
     }
@@ -212,17 +213,17 @@ export function createWorktree(name, opts = {}) {
     const branch = opts.branch ?? `${branchPrefix()}${name}`;
     const wtPath = deriveWorktreePath(name, root);
     if (existsSync(wtPath)) {
-        const error = `chi work: path already exists: ${wtPath}`;
+        const error = `${BIN_NAME} work: path already exists: ${wtPath}`;
         process.stderr.write(`${error}\n`);
         return { ok: false, error };
     }
     if (git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).ok) {
-        const error = `chi work: branch '${branch}' already exists`;
+        const error = `${BIN_NAME} work: branch '${branch}' already exists`;
         process.stderr.write(`${error}\n`);
         return { ok: false, error };
     }
     if (!git(["show-ref", "--verify", "--quiet", `refs/heads/${base}`]).ok) {
-        const error = `chi work: base branch '${base}' does not exist locally`;
+        const error = `${BIN_NAME} work: base branch '${base}' does not exist locally`;
         process.stderr.write(`${error}\n`);
         return { ok: false, error };
     }
@@ -242,7 +243,7 @@ export function createWorktree(name, opts = {}) {
             `created_at=${new Date().toISOString()}\n`);
     }
     catch (err) {
-        process.stderr.write(`chi work: marker write failed: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.stderr.write(`${BIN_NAME} work: marker write failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }
     return { ok: true, path: wtPath, branch };
 }
@@ -304,15 +305,15 @@ async function cmdRm(name, force) {
         target = wts.find((w) => resolve(w.path) === resolve(here)) ?? null;
     }
     if (!target) {
-        process.stderr.write(`chi work rm: no worktree matches '${name || "(current)"}'\n`);
+        process.stderr.write(`${BIN_NAME} work rm: no worktree matches '${name || "(current)"}'\n`);
         return 1;
     }
     if (!existsSync(markerPath(target.path, common))) {
-        process.stderr.write(`chi work rm: '${target.path}' is not chi-managed (no marker) — use 'git worktree remove' directly\n`);
+        process.stderr.write(`${BIN_NAME} work rm: '${target.path}' is not chi-managed (no marker) — use 'git worktree remove' directly\n`);
         return 1;
     }
     if (!force && !isClean(target.path)) {
-        process.stderr.write(`chi work rm: ${target.path} has uncommitted changes — pass --force to discard\n`);
+        process.stderr.write(`${BIN_NAME} work rm: ${target.path} has uncommitted changes — pass --force to discard\n`);
         return 1;
     }
     // git refuses to remove the worktree the caller is inside; fall back to
@@ -335,7 +336,7 @@ async function cmdRm(name, force) {
         const del = git(delArgs, meta?.source);
         if (!del.ok) {
             process.stderr.write(del.stderr);
-            process.stderr.write(`chi work rm: worktree gone, but branch '${branchRef}' has unmerged work — push or 'git branch -D ${branchRef}' to drop\n`);
+            process.stderr.write(`${BIN_NAME} work rm: worktree gone, but branch '${branchRef}' has unmerged work — push or 'git branch -D ${branchRef}' to drop\n`);
         }
     }
     process.stdout.write(`${c.green("✓ removed:")} ${target.path}\n`);
@@ -343,7 +344,7 @@ async function cmdRm(name, force) {
 }
 async function cmdCd(name) {
     if (!name) {
-        process.stderr.write("chi work cd: name required\n");
+        process.stderr.write(`${BIN_NAME} work cd: name required\n`);
         return 1;
     }
     const common = commonGitDir();
@@ -352,11 +353,11 @@ async function cmdCd(name) {
     const repoBase = here ? basename(here) : "";
     const target = findWorktreeByName(name, wts, repoBase);
     if (!target) {
-        process.stderr.write(`chi work cd: no worktree '${name}'\n`);
+        process.stderr.write(`${BIN_NAME} work cd: no worktree '${name}'\n`);
         return 1;
     }
     if (!existsSync(markerPath(target.path, common))) {
-        process.stderr.write(`chi work cd: '${target.path}' is not chi-managed\n`);
+        process.stderr.write(`${BIN_NAME} work cd: '${target.path}' is not chi-managed\n`);
         return 1;
     }
     process.stdout.write(`${target.path}\n`);
@@ -373,11 +374,11 @@ export async function run(argv) {
         return 0;
     }
     if (!commandExists("git")) {
-        process.stderr.write("chi work: missing dependency: git (run 'chi doctor git')\n");
+        process.stderr.write(`${BIN_NAME} work: missing dependency: git (run '${BIN_NAME} doctor git')\n`);
         return 1;
     }
     if (!isInsideRepo()) {
-        process.stderr.write("chi work: not a git repository\n");
+        process.stderr.write(`${BIN_NAME} work: not a git repository\n`);
         return 1;
     }
     switch (first) {
@@ -397,11 +398,11 @@ export async function run(argv) {
                     continue;
                 }
                 if (a.startsWith("-")) {
-                    process.stderr.write(`chi work rm: unknown option '${a}'\n`);
+                    process.stderr.write(`${BIN_NAME} work rm: unknown option '${a}'\n`);
                     return 1;
                 }
                 if (name) {
-                    process.stderr.write("chi work rm: only one name accepted\n");
+                    process.stderr.write(`${BIN_NAME} work rm: only one name accepted\n`);
                     return 1;
                 }
                 name = a;
@@ -421,24 +422,24 @@ export async function run(argv) {
                 if (a === "--base") {
                     const v = argv[++i];
                     if (!v) {
-                        process.stderr.write("chi work: --base needs a value\n");
+                        process.stderr.write(`${BIN_NAME} work: --base needs a value\n`);
                         return 1;
                     }
                     base = v;
                     continue;
                 }
                 if (a.startsWith("-")) {
-                    process.stderr.write(`chi work: unknown option '${a}'\n`);
+                    process.stderr.write(`${BIN_NAME} work: unknown option '${a}'\n`);
                     return 1;
                 }
                 if (name) {
-                    process.stderr.write("chi work: only one name arg accepted\n");
+                    process.stderr.write(`${BIN_NAME} work: only one name arg accepted\n`);
                     return 1;
                 }
                 name = a;
             }
             if (!name) {
-                process.stderr.write("chi work: <name> required\n");
+                process.stderr.write(`${BIN_NAME} work: <name> required\n`);
                 process.stderr.write(HELP);
                 return 1;
             }
