@@ -75,8 +75,10 @@ async function main() {
         return 1;
     }
 }
-main().then((code) => process.exit(code), (err) => {
+main().then((code) => {
+    process.exitCode = code;
+}, (err) => {
     process.stderr.write(`chi: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    process.exitCode = 1;
 });
 //# sourceMappingURL=index.js.map
