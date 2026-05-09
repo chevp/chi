@@ -18,6 +18,12 @@ import {
 } from "../git/index.js";
 import { commandExists, execSync } from "../spawn.js";
 import { parseFrontmatter, parseFrontmatterFile, statusBadge } from "../frontmatter.js";
+import {
+  discoverRepos,
+  groupByCategory,
+  repoLabel,
+  type RepoInfo,
+} from "../workspace.js";
 
 const HELP = `${BIN_NAME} status — overview of the current repo and ${BIN_TAG} configuration.
 
@@ -136,56 +142,155 @@ function prStateTag(row: PrRow): string {
   }
 }
 
-const MAX_GLOBAL_REPOS = 10;
+const MAX_DETAIL_REPOS = 15;
 
-/** Scan immediate children of `dir` for git repositories (up to MAX_GLOBAL_REPOS). */
-function discoverRepos(dir: string): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return [];
+interface RepoSummary {
+  info: RepoInfo;
+  branch: string;
+  dirty: boolean;
+  lastSha: string;
+  lastMsg: string;
+  lastAge: string;
+  lastTs: number;
+  hasUpstream: boolean;
+  ahead: number;
+  behind: number;
+  hasGithub: boolean;
+}
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function visLen(s: string): number {
+  return s.replace(ANSI_RE, "").length;
+}
+
+function padPlain(s: string, n: number): string {
+  const v = visLen(s);
+  return v < n ? s + " ".repeat(n - v) : s;
+}
+
+function summarize(info: RepoInfo): RepoSummary {
+  const branchR = git(["symbolic-ref", "--quiet", "--short", "HEAD"], info.path);
+  const branch = branchR.ok ? branchR.stdout.trim() : "detached";
+
+  const stR = git(["status", "--porcelain=v1"], info.path);
+  const dirty = stR.ok && stR.stdout.trim().length > 0;
+
+  const logR = git(
+    ["log", "-1", "--pretty=format:%h%x09%s%x09%cr%x09%ct"],
+    info.path,
+  );
+  let lastSha = "", lastMsg = "", lastAge = "", lastTs = 0;
+  if (logR.ok && logR.stdout.trim()) {
+    const parts = logR.stdout.split("\t");
+    lastSha = parts[0] ?? "";
+    lastMsg = parts[1] ?? "";
+    lastAge = parts[2] ?? "";
+    lastTs = Number.parseInt(parts[3] ?? "0", 10) || 0;
   }
-  const repos: string[] = [];
-  for (const entry of entries.sort()) {
-    if (entry.startsWith(".")) continue;
-    const full = join(dir, entry);
-    try {
-      if (!statSync(full).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    if (existsSync(join(full, ".git"))) {
-      repos.push(full);
-      if (repos.length >= MAX_GLOBAL_REPOS) break;
+
+  const upR = git(
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    info.path,
+  );
+  const hasUpstream = upR.ok;
+  let ahead = 0, behind = 0;
+  if (hasUpstream) {
+    const r = git(["rev-list", "--left-right", "--count", "HEAD...@{u}"], info.path);
+    if (r.ok) {
+      const m = r.stdout.trim().match(/^(\d+)\s+(\d+)/);
+      if (m) {
+        ahead = Number.parseInt(m[1] ?? "0", 10);
+        behind = Number.parseInt(m[2] ?? "0", 10);
+      }
     }
   }
-  return repos;
+
+  const remote = git(["remote", "get-url", "origin"], info.path);
+  const hasGithub = remote.ok && remote.stdout.includes("github");
+
+  return {
+    info,
+    branch,
+    dirty,
+    lastSha,
+    lastMsg,
+    lastAge,
+    lastTs,
+    hasUpstream,
+    ahead,
+    behind,
+    hasGithub,
+  };
 }
 
 async function globalStatus(short: boolean): Promise<number> {
-  const cwd = process.cwd();
-  const repos = discoverRepos(cwd);
-
-  section("global overview");
-  process.stdout.write(`  ${c.dim(`(not inside a git repository — showing workspace summary)`)}\n`);
+  const cwd = process.cwd().replace(/\\/g, "/");
+  const repos = discoverRepos(process.cwd());
 
   if (repos.length === 0) {
-    process.stdout.write(`  ${c.dim("no git repositories found in child directories")}\n`);
+    section("workspace");
+    kv("path", cwd);
+    process.stdout.write(`  ${c.dim("(no git repositories found in this directory or one level deeper)")}\n`);
     line();
     return 0;
   }
 
-  // ---- repositories with branch + state ------------------------------------
+  const summaries = repos.map(summarize);
+
+  // ---- workspace summary ---------------------------------------------------
+  const dirtyCount = summaries.filter((s) => s.dirty).length;
+  const aheadCount = summaries.filter((s) => s.ahead > 0).length;
+  const behindCount = summaries.filter((s) => s.behind > 0).length;
+  const detachedCount = summaries.filter((s) => s.branch === "detached").length;
+
+  section("workspace");
+  kv("path", cwd);
+  const stats: string[] = [`${summaries.length} repos`];
+  stats.push(dirtyCount > 0 ? `${c.yellow(String(dirtyCount))} dirty` : `${c.green("0")} dirty`);
+  if (aheadCount > 0) stats.push(`${c.cyan(String(aheadCount))} ahead`);
+  if (behindCount > 0) stats.push(`${c.red(String(behindCount))} behind`);
+  if (detachedCount > 0) stats.push(`${c.yellow(String(detachedCount))} detached`);
+  kv("status", stats.join(c.dim(" · ")));
+
+  // ---- repositories grouped by category ------------------------------------
+  const groups = groupByCategory(summaries.map((s) => s.info));
+  const summaryByPath = new Map(summaries.map((s) => [s.info.path, s]));
+
+  // Compute column widths from data
+  const nameWidth = Math.min(
+    36,
+    Math.max(20, ...summaries.map((s) => s.info.name.length)),
+  );
+  const branchWidth = Math.min(
+    24,
+    Math.max(8, ...summaries.map((s) => s.branch.length)),
+  );
+
   section("repositories");
-  for (const repo of repos) {
-    const name = basename(repo);
-    const branchR = git(["symbolic-ref", "--quiet", "--short", "HEAD"], repo);
-    const branch = branchR.ok ? branchR.stdout.trim() : "detached";
-    const st = git(["status", "--porcelain=v1"], repo);
-    const dirty = st.ok && st.stdout.trim().length > 0;
-    const state = dirty ? c.yellow("dirty") : c.green("clean");
-    process.stdout.write(`  ${c.cyan(name.padEnd(24))} ${branch.padEnd(20)} ${state}\n`);
+  const cats = [...groups.keys()].sort((a, b) => {
+    if (a === "" && b !== "") return -1;
+    if (b === "" && a !== "") return 1;
+    return a.localeCompare(b);
+  });
+  for (const cat of cats) {
+    const list = groups.get(cat)!;
+    const indent = cat ? "    " : "  ";
+    if (cat) {
+      process.stdout.write(`  ${c.bold(cat)} ${c.dim(`(${list.length})`)}\n`);
+    }
+    for (const info of list) {
+      const s = summaryByPath.get(info.path)!;
+      const dot = s.dirty ? c.yellow("●") : c.green("●");
+      const upstream =
+        s.hasUpstream && (s.ahead > 0 || s.behind > 0)
+          ? `  ${c.cyan(`↑${s.ahead}`)}${c.dim("/")}${c.red(`↓${s.behind}`)}`
+          : "";
+      const age = s.lastAge ? c.dim(s.lastAge) : "";
+      process.stdout.write(
+        `${indent}${dot} ${padPlain(info.name, nameWidth)}  ${padPlain(c.cyan(s.branch), branchWidth)}  ${age}${upstream}\n`,
+      );
+    }
   }
 
   if (short) {
@@ -193,42 +298,54 @@ async function globalStatus(short: boolean): Promise<number> {
     return 0;
   }
 
-  // ---- recent commits per repo ---------------------------------------------
-  section("recent commits");
-  for (const repo of repos) {
-    const name = basename(repo);
-    const commits = recentCommits(3, repo);
-    if (commits.trim()) {
-      process.stdout.write(`  ${c.bold(name)}\n`);
-      process.stdout.write(`${commits}\n`);
+  // ---- active: top-N most recently committed repos ------------------------
+  const active = [...summaries]
+    .filter((s) => s.lastTs > 0)
+    .sort((a, b) => b.lastTs - a.lastTs)
+    .slice(0, MAX_DETAIL_REPOS);
+
+  if (active.length > 0) {
+    section(`active ${c.dim(`(top ${active.length} by latest commit)`)}`);
+    const labelWidth = Math.min(
+      40,
+      Math.max(20, ...active.map((s) => repoLabel(s.info).length)),
+    );
+    for (const s of active) {
+      process.stdout.write(
+        `  ${padPlain(repoLabel(s.info), labelWidth)}  ${c.yellow(s.lastSha.padEnd(8))} ${s.lastMsg} ${c.dim(`(${s.lastAge})`)}\n`,
+      );
     }
   }
 
-  // ---- GitHub: issues + PRs per repo ---------------------------------------
+  // ---- GitHub: issues + PRs (parallel across repos) -----------------------
   if (commandExists("gh") && execSync("gh", ["auth", "status"]).ok) {
     const ghTimeout = Number.parseInt(process.env.CHI_GH_TIMEOUT ?? "3", 10) || 3;
+    const candidates = summaries.filter((s) => s.hasGithub).map((s) => s.info);
 
-    const allIssues: Array<{ repo: string; rows: IssueRow[] }> = [];
-    const allPrs: Array<{ repo: string; rows: PrRow[] }> = [];
+    const [issueResults, prResults] = await Promise.all([
+      Promise.all(
+        candidates.map((info) =>
+          fetchGhIssues(ghTimeout, info.path).then((rows) => ({ info, rows: rows ?? [] })),
+        ),
+      ),
+      Promise.all(
+        candidates.map((info) =>
+          fetchGhPrs(ghTimeout, info.path).then((rows) => ({ info, rows: rows ?? [] })),
+        ),
+      ),
+    ]);
 
-    for (const repo of repos) {
-      const name = basename(repo);
-      // Only query repos that have a GitHub remote
-      const remote = git(["remote", "get-url", "origin"], repo);
-      if (!remote.ok || !remote.stdout.includes("github")) continue;
+    const issueRepos = issueResults.filter((r) => r.rows.length > 0);
+    const prRepos = prResults.filter((r) => r.rows.length > 0);
+    const totalIssues = issueRepos.reduce((acc, r) => acc + r.rows.length, 0);
+    const totalPrs = prRepos.reduce((acc, r) => acc + r.rows.length, 0);
 
-      const [issues, prs] = await Promise.all([
-        fetchGhIssues(ghTimeout, repo),
-        fetchGhPrs(ghTimeout, repo),
-      ]);
-      if (issues && issues.length > 0) allIssues.push({ repo: name, rows: issues });
-      if (prs && prs.length > 0) allPrs.push({ repo: name, rows: prs });
-    }
-
-    section("issues");
-    if (allIssues.length > 0) {
-      for (const { repo: repoName, rows } of allIssues) {
-        process.stdout.write(`  ${c.bold(repoName)}\n`);
+    section(`issues ${c.dim(`(${totalIssues} open · ${issueRepos.length} repos)`)}`);
+    if (issueRepos.length === 0) {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    } else {
+      for (const { info, rows } of issueRepos) {
+        process.stdout.write(`  ${c.bold(repoLabel(info))}\n`);
         for (const row of rows) {
           const fm = row.body
             ? parseFrontmatter(row.body)
@@ -238,29 +355,27 @@ async function globalStatus(short: boolean): Promise<number> {
           if (row.labels) meta.push(c.dim(`[${row.labels}]`));
           if (row.assignees) meta.push(c.dim(`@${row.assignees}`));
           process.stdout.write(
-            `    ${c.cyan(`#${row.num}`)} ${statusBadge(fm.status).padEnd(11)} ${row.title}${
+            `    ${c.cyan(`#${row.num}`)} ${padPlain(statusBadge(fm.status), 11)} ${row.title}${
               meta.length ? ` ${meta.join(" ")}` : ""
             }\n`,
           );
         }
       }
-    } else {
-      process.stdout.write(`  ${c.dim("(none open)")}\n`);
     }
 
-    section("pull requests");
-    if (allPrs.length > 0) {
-      for (const { repo: repoName, rows } of allPrs) {
-        process.stdout.write(`  ${c.bold(repoName)}\n`);
+    section(`pull requests ${c.dim(`(${totalPrs} open · ${prRepos.length} repos)`)}`);
+    if (prRepos.length === 0) {
+      process.stdout.write(`  ${c.dim("(none open)")}\n`);
+    } else {
+      for (const { info, rows } of prRepos) {
+        process.stdout.write(`  ${c.bold(repoLabel(info))}\n`);
         for (const row of rows) {
           const tag = prStateTag(row);
           process.stdout.write(
-            `    ${c.cyan(`#${row.num}`)} ${tag.padEnd(9)} ${row.title} ${c.dim(`(${row.head} by @${row.author})`)}\n`,
+            `    ${c.cyan(`#${row.num}`)} ${padPlain(tag, 9)} ${row.title} ${c.dim(`(${row.head} by @${row.author})`)}\n`,
           );
         }
       }
-    } else {
-      process.stdout.write(`  ${c.dim("(none open)")}\n`);
     }
   }
 
