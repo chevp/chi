@@ -7,6 +7,12 @@
   "bin": {
     "chi": "bin/chi"
   },
+  "files": [
+    "bin",
+    "dist",
+    ".che",
+    "scripts"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
