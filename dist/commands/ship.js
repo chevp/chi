@@ -283,10 +283,89 @@ export async function run(argv) {
             process.stdout.write(`chi ship: detached HEAD at ${detachedSha} (no branch contains this commit)\n`);
         }
     }
+    // --- rebase onto default branch (e.g. origin/main) before pushing ---
+    // Keeps feature branches up to date with main so a PR back to main is
+    // always trivially mergeable. If a rebase rewrites history, the subsequent
+    // push must use --force-with-lease.
+    let needForceWithLease = false;
+    if (git(["-C", repoRoot, "symbolic-ref", "-q", "HEAD"]).ok) {
+        const curBranch = git(["-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
+        const headRef = git([
+            "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
+        ]);
+        let defaultBranch = "";
+        if (headRef.ok) {
+            defaultBranch = headRef.stdout.trim().replace(/^origin\//, "");
+        }
+        else {
+            for (const cand of ["main", "master"]) {
+                if (git([
+                    "-C", repoRoot, "show-ref", "--verify", "--quiet",
+                    `refs/remotes/origin/${cand}`,
+                ]).ok) {
+                    defaultBranch = cand;
+                    break;
+                }
+            }
+        }
+        if (defaultBranch && curBranch && curBranch !== defaultBranch) {
+            const fetch = git(["-C", repoRoot, "fetch", "origin", defaultBranch]);
+            if (!fetch.ok) {
+                process.stderr.write(`${c.dim(`${BIN_NAME} ship: fetch origin/${defaultBranch} failed — skipping rebase`)}\n`);
+            }
+            else {
+                const behindStr = git([
+                    "-C", repoRoot, "rev-list", "--count", `HEAD..origin/${defaultBranch}`,
+                ]).stdout.trim();
+                const behind = Number.parseInt(behindStr, 10) || 0;
+                if (behind > 0) {
+                    const headBefore = git(["-C", repoRoot, "rev-parse", "HEAD"]).stdout.trim();
+                    process.stdout.write(`${c.dim(`${BIN_NAME} ship: ${curBranch} is ${behind} commit(s) behind origin/${defaultBranch} — rebasing`)}\n`);
+                    const rb = git([
+                        "-C", repoRoot, "rebase", "--autostash", `origin/${defaultBranch}`,
+                    ]);
+                    process.stdout.write(rb.stdout);
+                    process.stderr.write(rb.stderr);
+                    if (!rb.ok) {
+                        const innerDir = git([
+                            "-C", repoRoot, "rev-parse", "--git-dir",
+                        ]).stdout.trim();
+                        const inRebase = existsSync(join(innerDir, "rebase-merge")) ||
+                            existsSync(join(innerDir, "rebase-apply"));
+                        if (inRebase) {
+                            const result = await resolveConflicts(repoRoot);
+                            const rc = finalizeRebase(repoRoot, result);
+                            if (rc !== 0)
+                                return rc;
+                        }
+                        else {
+                            process.stderr.write(`${BIN_NAME} ship: rebase onto origin/${defaultBranch} failed — resolve manually and retry\n`);
+                            return 1;
+                        }
+                    }
+                    const headAfter = git(["-C", repoRoot, "rev-parse", "HEAD"]).stdout.trim();
+                    if (headAfter !== headBefore) {
+                        needForceWithLease = true;
+                    }
+                }
+            }
+        }
+    }
     // Compact path: nothing in the working tree → one-line status, skip commit.
     const dirty = git(["-C", repoRoot, "status", "--porcelain"]).stdout.trim();
     if (!dirty) {
-        process.stdout.write(`${basename(repoRoot)}: clean\n`);
+        if (needForceWithLease) {
+            process.stdout.write(`\n── repo: ${basename(repoRoot)} (rebased) ──\n`);
+            const rc = await pushWithRecovery({
+                args: ["--force-with-lease"],
+                cwd: repoRoot,
+            });
+            if (rc !== 0)
+                return rc;
+        }
+        else {
+            process.stdout.write(`${basename(repoRoot)}: clean\n`);
+        }
         // Worktree-aware hint: if the source repo is clean but a chi-managed
         // worktree has an active flow, the user probably ran ship from the wrong
         // directory. Point them at it. (This is the common pitfall after
@@ -305,7 +384,18 @@ export async function run(argv) {
     process.stdout.write(`\n── repo: ${basename(repoRoot)} ──\n`);
     let rc;
     if (git(["-C", repoRoot, "symbolic-ref", "-q", "HEAD"]).ok) {
-        rc = await commitRun(["--push", "--yes"]);
+        if (needForceWithLease) {
+            rc = await commitRun(["--yes"]);
+            if (rc !== 0)
+                return rc;
+            rc = await pushWithRecovery({
+                args: ["--force-with-lease"],
+                cwd: repoRoot,
+            });
+        }
+        else {
+            rc = await commitRun(["--push", "--yes"]);
+        }
     }
     else {
         process.stdout.write(`${BIN_NAME} ship: still in detached HEAD, committing without push\n`);
