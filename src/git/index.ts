@@ -178,6 +178,16 @@ export async function pushWithRecovery(opts: PushOptions = {}): Promise<number> 
   const rejected = /rejected.*(fetch first|non-fast-forward)|Updates were rejected/.test(out);
   if (!rejected) {
     process.stderr.write(out);
+    // Archived repo: GitHub returns 403 with a "This repository was archived"
+    // notice. The remediation is concrete (unarchive or repoint origin), so
+    // surface it directly rather than pointing the user at `chi explain`.
+    if (/This repository was archived so it is read-only/i.test(out)) {
+      process.stderr.write(
+        `\n${c.red(`${BIN_NAME} ship: push refused — remote repository is archived (read-only)`)}\n` +
+          `unarchive on GitHub, or repoint the remote: ${c.dim("git remote set-url origin <new-url>")}\n`,
+      );
+      return first.status ?? 1;
+    }
     recordError(cmd, first.status, out, cwd);
     process.stderr.write(
       `\n${c.red(`${BIN_NAME} ship: push failed (exit ${first.status ?? "?"})`)}\n` +

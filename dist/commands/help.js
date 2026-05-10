@@ -15,6 +15,9 @@ Commands:
                       '${n} work list|rm|cd' manage existing worktrees
   done                finish active flow: gh pr merge --squash --auto, back to base
                       (in a worktree: removes the worktree after merge)
+  release [version]   create + push annotated vX.Y.Z tag (defaults to
+                      ./package.json version); a 'on: push: tags' workflow
+                      can then publish a GitHub Release
   issue [sub] [args]  open / list / close / fix GitHub issues (AI-drafted body);
                       '${n} issue [text]' is shorthand for '${n} issue create [text]';
                       '${n} issue fix <n> [hint]' cuts a fix branch + starts a

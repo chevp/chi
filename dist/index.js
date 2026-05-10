@@ -14,6 +14,7 @@ import * as configCmd from "./commands/config.js";
 import * as doctorCmd from "./commands/doctor.js";
 import * as workflowCmd from "./commands/workflow.js";
 import * as workCmd from "./commands/work.js";
+import * as releaseCmd from "./commands/release.js";
 import { resolveTrigger } from "./workflow/loader.js";
 const COMMANDS = {
     status: statusCmd.run,
@@ -30,6 +31,7 @@ const COMMANDS = {
     workflow: workflowCmd.run,
     run: workflowCmd.runAlias,
     work: workCmd.run,
+    release: releaseCmd.run,
     help: helpCmd.run,
     "-h": helpCmd.run,
     "--help": helpCmd.run,
