@@ -351,16 +351,27 @@ export async function run(argv: string[]): Promise<number> {
       }
     }
     if (defaultBranch && curBranch && curBranch !== defaultBranch) {
-      // Full fetch (no branch arg) so every refs/remotes/origin/* is fresh.
-      // Fetching only <defaultBranch> would leave refs/remotes/origin/<curBranch>
-      // stale or missing, which makes the later --force-with-lease unreliable
-      // ("stale info" rejection from the server).
+      // Full fetch first so the user's configured refspec runs as usual.
       const fetch = git(["-C", repoRoot, "fetch", "origin"]);
       if (!fetch.ok) {
         process.stderr.write(
           `${c.dim(`${BIN_NAME} ship: fetch origin failed — skipping rebase`)}\n`,
         );
       } else {
+        // Force-fetch <curBranch> and <defaultBranch> into their explicit
+        // remote-tracking refs, bypassing any narrowed origin.fetch refspec
+        // (e.g. one that only covers main). Without this, --force-with-lease
+        // fails with "stale info" because refs/remotes/origin/<curBranch>
+        // is missing or out of date. <curBranch> is best-effort because the
+        // branch may not exist on remote yet.
+        git([
+          "-C", repoRoot, "fetch", "origin",
+          `+refs/heads/${curBranch}:refs/remotes/origin/${curBranch}`,
+        ]);
+        git([
+          "-C", repoRoot, "fetch", "origin",
+          `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`,
+        ]);
         // Safety: refuse to force-push if origin/<curBranch> has commits not
         // in HEAD — a force-with-lease would silently lose them.
         const remoteCurRef = `refs/remotes/origin/${curBranch}`;
