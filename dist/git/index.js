@@ -128,8 +128,22 @@ export function recordError(cmd, exitCode, output, cwd) {
  * user at `chi explain`.
  */
 export async function pushWithRecovery(opts = {}) {
-    const args = opts.args ?? [];
+    let args = opts.args ?? [];
     const cwd = opts.cwd;
+    // First push of a fresh branch: if no upstream is configured and the caller
+    // didn't already pass -u/--set-upstream, set it automatically so `chi ship`
+    // works on a branch that was just created locally.
+    const hasUpstreamFlag = args.some((a) => a === "-u" || a === "--set-upstream");
+    if (!hasUpstreamFlag) {
+        const sym = git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd);
+        if (sym.ok) {
+            const branch = sym.stdout.trim();
+            const ups = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd);
+            if (branch && !ups.ok) {
+                args = ["-u", "origin", branch, ...args];
+            }
+        }
+    }
     const cmd = `git push ${args.join(" ")}`.trim();
     const first = git(["push", ...args], cwd);
     process.stdout.write(first.stdout);
