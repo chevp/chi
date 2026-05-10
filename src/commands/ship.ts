@@ -1,5 +1,5 @@
-import { basename, join } from "node:path";
-import { existsSync, appendFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { existsSync, appendFileSync, mkdirSync, renameSync } from "node:fs";
 import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
@@ -22,6 +22,54 @@ Workspace-root mode (cwd is not a git repo):
 `;
 
 const SELF_BIN = process.argv[1] ?? "chi";
+
+/**
+ * Parse `git pull/checkout/merge` stderr for the
+ * "untracked working tree files would be overwritten" diagnostic and return
+ * the relative paths git listed. Empty array if the pattern is absent.
+ */
+function parseOverwrittenUntracked(stderr: string): string[] {
+  const m = stderr.match(
+    /untracked working tree files would be overwritten[^\n:]*:\r?\n([\s\S]*?)(?:\r?\n(?:Aborting|Please move or remove them))/i,
+  );
+  if (!m || !m[1]) return [];
+  const out: string[] = [];
+  for (const ln of m[1].split(/\r?\n/)) {
+    const trimmed = ln.trim();
+    if (!trimmed) continue;
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/**
+ * Move untracked paths blocking a pull into .git/chi-overwrite-backup-<ts>/,
+ * preserving relative paths so the user can recover them later. Returns the
+ * backup directory and per-file outcomes. Files that fail to move are
+ * reported back so the caller can abort cleanly.
+ */
+function backupBlockingFiles(
+  repoRoot: string,
+  paths: string[],
+): { backupDir: string; moved: number; failed: string[] } {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupDir = join(repoRoot, ".git", `chi-overwrite-backup-${ts}`);
+  mkdirSync(backupDir, { recursive: true });
+  let moved = 0;
+  const failed: string[] = [];
+  for (const rel of paths) {
+    const src = join(repoRoot, rel);
+    const dst = join(backupDir, rel);
+    try {
+      mkdirSync(dirname(dst), { recursive: true });
+      renameSync(src, dst);
+      moved++;
+    } catch {
+      failed.push(rel);
+    }
+  }
+  return { backupDir, moved, failed };
+}
 
 /**
  * Workspace-root mode: discover repos under cwd and ship each.
@@ -180,9 +228,36 @@ export async function run(argv: string[]): Promise<number> {
       process.stderr.write(
         `chi ship: ff-only pull failed in ${basename(repoRoot)} — trying pull --rebase --autostash\n`,
       );
-      const rb = git(["-C", repoRoot, "pull", "--rebase", "--autostash"]);
+      let rb = git(["-C", repoRoot, "pull", "--rebase", "--autostash"]);
       process.stdout.write(rb.stdout);
       process.stderr.write(rb.stderr);
+
+      // Recovery: --autostash only handles tracked changes. If untracked
+      // files (typically build artifacts) block the merge, move them aside
+      // into .git/chi-overwrite-backup-<ts>/ and retry once.
+      if (!rb.ok) {
+        const blocking = parseOverwrittenUntracked(rb.stderr);
+        if (blocking.length > 0) {
+          process.stderr.write(
+            `${c.dim(`${BIN_NAME} ship: ${blocking.length} untracked file(s) block the pull — moving aside and retrying`)}\n`,
+          );
+          const { backupDir, moved, failed } = backupBlockingFiles(repoRoot, blocking);
+          if (failed.length > 0) {
+            process.stderr.write(
+              `${BIN_NAME} ship: could not move ${failed.length} file(s); aborting:\n`,
+            );
+            for (const f of failed) process.stderr.write(`  - ${f}\n`);
+            return 1;
+          }
+          process.stderr.write(
+            `${c.dim(`${BIN_NAME} ship: moved ${moved} file(s) → ${backupDir.replace(/\\/g, "/")}`)}\n`,
+          );
+          rb = git(["-C", repoRoot, "pull", "--rebase", "--autostash"]);
+          process.stdout.write(rb.stdout);
+          process.stderr.write(rb.stderr);
+        }
+      }
+
       if (!rb.ok) {
         const innerDir = git(["-C", repoRoot, "rev-parse", "--git-dir"]).stdout.trim();
         const inRebase =
@@ -192,11 +267,12 @@ export async function run(argv: string[]): Promise<number> {
           const rc = finalizeRebase(repoRoot, result);
           if (rc !== 0) return rc;
           // Rebase succeeded after resolution — continue with ship
+        } else {
+          process.stderr.write(
+            `chi ship: pull failed in ${basename(repoRoot)} — resolve manually and retry\n`,
+          );
+          return 1;
         }
-        process.stderr.write(
-          `chi ship: pull failed in ${basename(repoRoot)} — resolve manually and retry\n`,
-        );
-        return 1;
       }
     }
   }
