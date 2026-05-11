@@ -17,6 +17,17 @@ const TOOLS = new Set(["status", "doctor", "help", "config"]);
 
 const CURA_DEFAULT_URL = "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
 const CURA_DEFAULT_MODEL = "smollm2:135m";
+const OLLAMA_DEFAULT_URL = "http://localhost:11434";
+
+type ProviderName = "ollama" | "cura";
+
+interface ModelEntry {
+  id: string;
+  provider: ProviderName;
+  name: string;
+}
+
+const EMBED_RE = /(?:^|[-/_:])embed(?:ding)?(?:[-_/:]|$)/i;
 
 interface Args {
   host: string;
@@ -41,7 +52,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 function helpText(): string {
-  return `${BIN_NAME} serve — start a local web console (chat UI over the cura backend)
+  return `${BIN_NAME} serve — start a local web console (chat UI over cura + local ollama)
 
 Usage: ${BIN_NAME} serve [--port <n>] [--host <h>] [--no-open]
 
@@ -53,9 +64,10 @@ Options:
 
 Routes (same-origin):
   GET  /             → static console UI
-  GET  /api/health   → { ok, provider, model, version }
-  GET  /api/models   → { models: string[], active: string }
-  POST /api/chat     → NDJSON stream from cura /api/chat
+  GET  /api/health   → { providers: { ollama, cura }, default }
+  GET  /api/models   → { models: ModelEntry[], active: string }
+  POST /api/chat     → NDJSON stream from the chosen backend
+                      body: { model: "ollama/<name>" | "cura/<name>", messages, stream }
   POST /api/run      → run a chi tool (status | doctor | help | config)
 `;
 }
@@ -106,6 +118,10 @@ function curaModel(): string {
   return process.env.CHI_LLM_MODEL ?? CURA_DEFAULT_MODEL;
 }
 
+function ollamaUrlBase(): string {
+  return (process.env.CHI_OLLAMA_URL ?? OLLAMA_DEFAULT_URL).replace(/\/+$/, "");
+}
+
 function basicAuthHeader(): string | null {
   const user = process.env.BASIC_AUTH_USER;
   const password = process.env.BASIC_AUTH_PASSWORD;
@@ -113,94 +129,167 @@ function basicAuthHeader(): string | null {
   return "Basic " + Buffer.from(`${user}:${password}`).toString("base64");
 }
 
-async function handleHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const auth = basicAuthHeader();
-  if (!auth) {
-    sendJson(res, 200, {
-      ok: false,
-      provider: "cura",
-      model: curaModel(),
-      error: "BASIC_AUTH_USER / BASIC_AUTH_PASSWORD not set — run `chi init` first",
-    });
-    return;
-  }
+async function fetchWithTimeout(url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<Response> {
+  const { timeoutMs = 4000, ...rest } = init;
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 5000);
-    const r = await fetch(`${curaUrlBase()}/api/tags`, {
-      headers: { Authorization: auth },
-      signal: ac.signal,
-    });
+    return await fetch(url, { ...rest, signal: ac.signal });
+  } finally {
     clearTimeout(t);
-    sendJson(res, 200, {
-      ok: r.ok,
-      provider: "cura",
-      model: curaModel(),
-    });
-  } catch (e) {
-    sendJson(res, 200, {
-      ok: false,
-      provider: "cura",
-      model: curaModel(),
-      error: e instanceof Error ? e.message : String(e),
-    });
   }
+}
+
+async function listOllamaModels(): Promise<string[]> {
+  try {
+    const r = await fetchWithTimeout(`${ollamaUrlBase()}/api/tags`, { timeoutMs: 1500 });
+    if (!r.ok) return [];
+    const data = (await r.json()) as { models?: Array<{ name?: string }> };
+    return (data.models ?? [])
+      .map((m) => m.name ?? "")
+      .filter((n) => n.length > 0 && !EMBED_RE.test(n))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+async function listCuraModels(): Promise<string[]> {
+  const auth = basicAuthHeader();
+  if (!auth) return [];
+  try {
+    const r = await fetchWithTimeout(`${curaUrlBase()}/api/tags`, {
+      headers: { Authorization: auth },
+      timeoutMs: 5000,
+    });
+    if (!r.ok) return [];
+    const data = (await r.json()) as { models?: Array<{ name?: string }> };
+    return (data.models ?? []).map((m) => m.name ?? "").filter(Boolean).sort();
+  } catch {
+    return [];
+  }
+}
+
+function parseModelId(id: string): { provider: ProviderName; name: string } | null {
+  const slash = id.indexOf("/");
+  if (slash < 0) return null;
+  const provider = id.slice(0, slash);
+  const name = id.slice(slash + 1);
+  if ((provider !== "ollama" && provider !== "cura") || !name) return null;
+  return { provider, name };
+}
+
+async function handleHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const [ollamaModels, curaModels] = await Promise.all([listOllamaModels(), listCuraModels()]);
+  const ollamaOk = ollamaModels.length > 0;
+  const curaOk = curaModels.length > 0;
+  const def: ProviderName = ollamaOk ? "ollama" : "cura";
+  sendJson(res, 200, {
+    ok: ollamaOk || curaOk,
+    default: def,
+    providers: {
+      ollama: { ok: ollamaOk, url: ollamaUrlBase(), models: ollamaModels.length },
+      cura: {
+        ok: curaOk,
+        url: curaUrlBase(),
+        models: curaModels.length,
+        auth: basicAuthHeader() !== null,
+      },
+    },
+  });
 }
 
 async function handleModels(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const auth = basicAuthHeader();
-  if (!auth) {
-    sendJson(res, 200, { models: [curaModel()], active: curaModel() });
-    return;
+  const [ollamaModels, curaModels] = await Promise.all([listOllamaModels(), listCuraModels()]);
+  const models: ModelEntry[] = [
+    ...ollamaModels.map<ModelEntry>((name) => ({ id: `ollama/${name}`, provider: "ollama", name })),
+    ...curaModels.map<ModelEntry>((name) => ({ id: `cura/${name}`, provider: "cura", name })),
+  ];
+
+  let active: string | null = null;
+  if (ollamaModels.length > 0) {
+    const pinned = process.env.CHI_OLLAMA_MODEL?.trim();
+    const match = pinned && ollamaModels.find((n) => n === pinned || n.startsWith(`${pinned}:`));
+    active = `ollama/${match ?? ollamaModels[0]}`;
+  } else if (curaModels.length > 0) {
+    const want = curaModel();
+    const match = curaModels.find((n) => n === want || n.startsWith(`${want}:`)) ?? curaModels[0];
+    active = `cura/${match}`;
   }
-  try {
-    const r = await fetch(`${curaUrlBase()}/api/tags`, {
-      headers: { Authorization: auth },
-    });
-    if (!r.ok) {
-      sendJson(res, 502, { models: [], error: `cura HTTP ${r.status}` });
-      return;
-    }
-    const data = (await r.json()) as { models?: Array<{ name?: string }> };
-    const models = (data.models ?? []).map((m) => m.name ?? "").filter(Boolean).sort();
-    sendJson(res, 200, { models, active: curaModel() });
-  } catch (e) {
-    sendJson(res, 502, { models: [], error: e instanceof Error ? e.message : String(e) });
-  }
+
+  sendJson(res, 200, { models, active });
 }
 
 async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const auth = basicAuthHeader();
-  if (!auth) {
-    sendJson(res, 412, { error: "BASIC_AUTH_USER / BASIC_AUTH_PASSWORD not set" });
-    return;
-  }
-  let payload: { model?: string; messages?: Array<{ role: string; content: string }>; stream?: boolean };
+  let payload: {
+    model?: string;
+    messages?: Array<{ role: string; content: string }>;
+    stream?: boolean;
+    provider?: ProviderName;
+  };
   try {
     payload = JSON.parse(await readBody(req));
   } catch {
     sendJson(res, 400, { error: "invalid JSON body" });
     return;
   }
-  const model = payload.model || curaModel();
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const stream = payload.stream !== false;
 
+  let provider: ProviderName;
+  let modelName: string;
+  const parsed = payload.model ? parseModelId(payload.model) : null;
+  if (parsed) {
+    provider = parsed.provider;
+    modelName = parsed.name;
+  } else if (payload.provider === "ollama" || payload.provider === "cura") {
+    provider = payload.provider;
+    modelName = payload.model ?? "";
+  } else {
+    provider = "cura";
+    modelName = payload.model ?? curaModel();
+  }
+  if (!modelName) {
+    sendJson(res, 400, { error: "missing model name" });
+    return;
+  }
+
+  let url: string;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (provider === "cura") {
+    const auth = basicAuthHeader();
+    if (!auth) {
+      sendJson(res, 412, {
+        error: "BASIC_AUTH_USER / BASIC_AUTH_PASSWORD not set — run `chi init` first",
+      });
+      return;
+    }
+    headers["Authorization"] = auth;
+    url = `${curaUrlBase()}/api/chat`;
+  } else {
+    url = `${ollamaUrlBase()}/api/chat`;
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(`${curaUrlBase()}/api/chat`, {
+    upstream = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: auth },
-      body: JSON.stringify({ model, messages, stream }),
+      headers,
+      body: JSON.stringify({ model: modelName, messages, stream }),
     });
   } catch (e) {
-    sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) });
+    sendJson(res, 502, {
+      error: `${provider} unreachable: ${e instanceof Error ? e.message : String(e)}`,
+    });
     return;
   }
 
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
-    sendJson(res, upstream.status, { error: `cura HTTP ${upstream.status}`, detail: text.slice(0, 500) });
+    sendJson(res, upstream.status, {
+      error: `${provider} HTTP ${upstream.status}`,
+      detail: text.slice(0, 500),
+    });
     return;
   }
 

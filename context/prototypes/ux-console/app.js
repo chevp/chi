@@ -33,6 +33,21 @@
         connDot: $("#connDot"),
         connText: $("#connText"),
         versionText: $("#versionText"),
+        providerBadge: $("#providerBadge"),
+    };
+
+    // Default port chi serve listens on. Surfaced in error hints when the
+    // browser can reach the static page but not the server (rare — usually
+    // means the user opened index.html via file:// or chi serve was killed).
+    const SERVE_HINT = "is `chi serve` running? start it with: chi serve";
+
+    const friendlyFetchError = (e) => {
+        const msg = e && e.message ? e.message : String(e);
+        // Browsers report a network-layer failure as TypeError "Failed to fetch".
+        if (e && (e.name === "TypeError" || /failed to fetch|networkerror/i.test(msg))) {
+            return `${msg} — ${SERVE_HINT}`;
+        }
+        return msg;
     };
 
     const STORAGE_SESSIONS = "chi.console.sessions";
@@ -314,21 +329,30 @@
     // ==========================================================
     //   CHI SERVE API
     // ==========================================================
+    const providerOf = (id) => (id && id.indexOf("/") > 0 ? id.split("/")[0] : "");
+    const modelNameOf = (id) => (id && id.indexOf("/") > 0 ? id.slice(id.indexOf("/") + 1) : id || "");
+
+    const refreshProviderBadge = () => {
+        const p = providerOf(els.model.value);
+        if (!p) { els.providerBadge.textContent = "—"; return; }
+        els.providerBadge.textContent = p === "ollama" ? "local" : "cura";
+    };
+
     async function apiHealth() {
         try {
             const r = await fetch("/api/health");
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
-            if (data.version) els.versionText.textContent = `v${data.version}`;
-            if (data.ok) {
-                setConn("ok", `${data.provider || "cura"} ready`);
-                return data;
-            }
-            setConn("warn", "provider unreachable");
+            const ollamaOk = data.providers && data.providers.ollama && data.providers.ollama.ok;
+            const curaOk = data.providers && data.providers.cura && data.providers.cura.ok;
+            if (ollamaOk && curaOk) setConn("ok", "ollama + cura ready");
+            else if (ollamaOk) setConn("ok", "local ollama ready");
+            else if (curaOk) setConn("ok", "cura ready");
+            else setConn("warn", "no provider reachable");
             return data;
         } catch (e) {
             setConn("err", "chi serve down");
-            return { ok: false, error: String(e) };
+            return { ok: false, error: friendlyFetchError(e) };
         }
     }
 
@@ -337,8 +361,9 @@
             const r = await fetch("/api/models");
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
-            const models = data.models || [];
+            const models = Array.isArray(data.models) ? data.models : [];
             const preferred = (activeSession() && activeSession().model) || els.model.value;
+
             els.model.innerHTML = "";
             if (models.length === 0) {
                 const opt = document.createElement("option");
@@ -346,20 +371,33 @@
                 opt.textContent = "— no models —";
                 els.model.appendChild(opt);
             } else {
-                for (const m of models) {
-                    const opt = document.createElement("option");
-                    opt.value = m;
-                    opt.textContent = m;
-                    els.model.appendChild(opt);
+                const groups = { ollama: [], cura: [] };
+                for (const m of models) (groups[m.provider] || (groups[m.provider] = [])).push(m);
+                const labels = { ollama: "Local ollama", cura: "Cura (hosted)" };
+                for (const key of ["ollama", "cura"]) {
+                    const list = groups[key];
+                    if (!list || list.length === 0) continue;
+                    const og = document.createElement("optgroup");
+                    og.label = labels[key];
+                    for (const m of list) {
+                        const opt = document.createElement("option");
+                        opt.value = m.id;
+                        opt.textContent = m.name;
+                        og.appendChild(opt);
+                    }
+                    els.model.appendChild(og);
                 }
-                els.model.value = models.includes(preferred) ? preferred : (data.active || models[0]);
+                const ids = models.map((m) => m.id);
+                els.model.value = ids.includes(preferred) ? preferred : (data.active || ids[0]);
             }
-            els.modelEcho.textContent = els.model.value || "no model";
+            els.modelEcho.textContent = modelNameOf(els.model.value) || "no model";
+            refreshProviderBadge();
             updateSendBtn();
             return models;
         } catch (e) {
-            els.model.innerHTML = `<option value="">— error: ${e.message} —</option>`;
+            els.model.innerHTML = `<option value="">— error: ${escapeHtml(friendlyFetchError(e))} —</option>`;
             els.modelEcho.textContent = "no model";
+            refreshProviderBadge();
             return [];
         }
     }
@@ -423,7 +461,7 @@
             });
         } catch (e) {
             if (e.name === "AbortError") onError(new Error("Request aborted."));
-            else onError(e);
+            else onError(new Error(friendlyFetchError(e)));
         }
     }
 
@@ -485,7 +523,7 @@
                 contentEl.innerHTML = renderContent(meta.content);
                 els.latency.textContent = `${meta.latency_ms} ms`;
                 els.tokens.textContent = `${meta.eval_count} tokens`;
-                els.modelEcho.textContent = model;
+                els.modelEcho.textContent = modelNameOf(model);
                 setConn("ok", "ready");
                 els.abortBtn.disabled = true;
                 updateSendBtn();
@@ -496,7 +534,7 @@
                 state.currentRequest = null;
                 if (!stillActive()) return;
                 wrap.remove();
-                appendSystemNote(err.message, "error");
+                appendSystemNote(friendlyFetchError(err), "error");
                 setConn("err", "error");
                 els.abortBtn.disabled = true;
                 updateSendBtn();
@@ -570,7 +608,7 @@
             updateMsgCount();
         } catch (e) {
             placeholder && placeholder.remove && placeholder.remove();
-            appendSystemNote(`chi ${name}: ${e.message}`, "error");
+            appendSystemNote(`chi ${name}: ${friendlyFetchError(e)}`, "error");
         }
     }
 
@@ -622,7 +660,8 @@
             if (state.currentRequest) state.currentRequest.abort();
         });
         els.model.addEventListener("change", () => {
-            els.modelEcho.textContent = els.model.value || "no model";
+            els.modelEcho.textContent = modelNameOf(els.model.value) || "no model";
+            refreshProviderBadge();
             updateSendBtn();
             persistActive();
         });
