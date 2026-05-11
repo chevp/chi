@@ -200,15 +200,32 @@ export async function run(argv: string[]): Promise<number> {
   const provider = getProvider();
 
   let msg = "";
+  let raw = "";
   try {
-    const raw = await withSpinner(
+    raw = await withSpinner(
       `thinking via ${activeProviderName()} (${provider.activeModel()})`,
       () => providerSmartGenerate(prompt),
     );
     msg = cleanupMessage(raw);
+    if (!msg && raw.trim()) {
+      // Raw response existed but was rejected by cleanupMessage (typically
+      // because looksLikeMeta caught a "Here is..." preamble). Retry once
+      // with a sharpened reminder.
+      const retryPrompt =
+        prompt +
+        '\n\nReminder: respond with ONLY the commit message. The previous attempt was rejected because it started with meta narration like "Here is" or "The diff". Begin directly with a verb in the imperative mood.';
+      raw = await withSpinner(
+        `retrying via ${activeProviderName()} (${provider.activeModel()})`,
+        () => providerSmartGenerate(retryPrompt),
+      );
+      msg = cleanupMessage(raw);
+    }
     if (!msg) {
+      const reason = raw.trim()
+        ? `rejected as meta/echoed-code (first line: ${JSON.stringify(raw.split(/\r?\n/)[0]?.slice(0, 80) ?? "")})`
+        : "raw response was empty";
       process.stderr.write(
-        `${sym.warn} ${c.dim(`${BIN_NAME} commit:`)} ${c.yellow("LLM returned empty message")} ${c.dim("— using default message")}\n`,
+        `${sym.warn} ${c.dim(`${BIN_NAME} commit:`)} ${c.yellow("LLM returned no usable message")} ${c.dim(`— ${reason} — using default message`)}\n`,
       );
     }
   } catch (err) {

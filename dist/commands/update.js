@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { execInherit } from "../spawn.js";
+import { execInherit, execSync } from "../spawn.js";
 import { isInsideRepo, repoRoot as getRepoRoot } from "../git/index.js";
 import { discoverRepos, repoLabel } from "../workspace.js";
 import { recoverRepo, printReport, summarize } from "../recover.js";
@@ -61,6 +61,42 @@ function versionLine(oldVer, newVer) {
         return `${o} ${c.dim("(unchanged)")}`;
     return `${c.dim(o)} → ${c.green(n)}`;
 }
+/**
+ * `npm install -g <git-url>` crashes with ENOTDIR when the existing entry at
+ * `<npm root -g>/<pkg>` is a symlink (e.g. left over from `npm link`): npm's
+ * internal rename treats it as a directory. Remove the symlink first so the
+ * install can proceed. Prints a notice so the user knows it happened.
+ *
+ * Returns true if a stale symlink was removed, false otherwise.
+ */
+function clearStaleGlobalSymlink() {
+    const r = execSync("npm", ["root", "-g"]);
+    if (!r.ok)
+        return false;
+    const globalDir = r.stdout.trim();
+    if (!globalDir)
+        return false;
+    const pkgPath = join(globalDir, "chi");
+    let stat;
+    try {
+        stat = lstatSync(pkgPath);
+    }
+    catch {
+        return false;
+    }
+    if (!stat.isSymbolicLink())
+        return false;
+    try {
+        const target = realpathSync(pkgPath);
+        unlinkSync(pkgPath);
+        process.stdout.write(`  ${c.dim(`removed stale symlink ${pkgPath} → ${target}`)}\n`);
+        return true;
+    }
+    catch (err) {
+        process.stderr.write(`${BIN_NAME} update: could not remove stale symlink at ${pkgPath}: ${err instanceof Error ? err.message : String(err)}\n`);
+        return false;
+    }
+}
 async function selfUpdate() {
     const realBin = realpathSync(process.argv[1] ?? "");
     const root = findPackageRoot(dirname(realBin));
@@ -74,6 +110,7 @@ async function selfUpdate() {
     kv("current version", `v${oldVersion ?? "?"}`);
     kv("source", REMOTE);
     process.stdout.write("\n");
+    clearStaleGlobalSymlink();
     const rc = await execInherit("npm", ["install", "-g", REMOTE]);
     if (rc !== 0)
         return rc;
