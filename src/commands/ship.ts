@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path";
-import { existsSync, appendFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
@@ -22,6 +22,70 @@ Workspace-root mode (cwd is not a git repo):
 `;
 
 const SELF_BIN = process.argv[1] ?? "chi";
+
+/**
+ * Bump the patch field of <repoRoot>/package.json (e.g. 0.1.0 → 0.1.1).
+ *
+ * Returns the new version string on success, null when there is no package.json
+ * (non-Node repos ship as before), or null when the current `version` is not
+ * parseable as semver. Preserves any pre-release / build suffix verbatim.
+ *
+ * Indentation is detected from the file (defaults to 2 spaces) so the diff
+ * stays minimal. Only callers that have already verified the working tree is
+ * dirty AND that the call is top-level (process.env.__CHI_NESTED !== "1")
+ * should invoke this — the function itself does no such guarding.
+ */
+function maybeBumpPatchVersion(repoRoot: string): string | null {
+  const pkgPath = join(repoRoot, "package.json");
+  if (!existsSync(pkgPath)) return null;
+
+  let raw: string;
+  try {
+    raw = readFileSync(pkgPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  let pkg: { version?: unknown; [k: string]: unknown };
+  try {
+    pkg = JSON.parse(raw);
+  } catch {
+    process.stdout.write(
+      `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} package.json is not valid JSON, ${c.yellow("skipping bump")}\n`,
+    );
+    return null;
+  }
+
+  if (typeof pkg.version !== "string") {
+    process.stdout.write(
+      `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} package.json has no string version, ${c.yellow("skipping bump")}\n`,
+    );
+    return null;
+  }
+
+  const m = /^(\d+)\.(\d+)\.(\d+)(.*)$/.exec(pkg.version);
+  if (!m) {
+    process.stdout.write(
+      `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} version '${pkg.version}' is not parseable semver, ${c.yellow("skipping bump")}\n`,
+    );
+    return null;
+  }
+  const oldVersion = pkg.version;
+  const next = `${m[1]}.${m[2]}.${Number.parseInt(m[3] ?? "0", 10) + 1}${m[4] ?? ""}`;
+
+  // Detect indent from the first indented line; default to 2 spaces.
+  const indentMatch = /\n([ \t]+)"/.exec(raw);
+  const indent = indentMatch?.[1] ?? "  ";
+  const trailingNewline = raw.endsWith("\n") ? "\n" : "";
+
+  pkg.version = next;
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, indent) + trailingNewline);
+
+  process.stdout.write(
+    `${sym.arrow} ${c.dim(`${BIN_NAME} ship:`)} bumped ${c.cyan("package.json")} ${c.dim(oldVersion + " →")} ${c.green(next)}\n`,
+  );
+  return next;
+}
 
 /**
  * Parse `git pull/checkout/merge` stderr for the
@@ -313,6 +377,12 @@ export async function run(argv: string[]): Promise<number> {
       `\n${c.bold(c.cyan(`── repo: ${basename(repoRoot)} (${flowLabel}) ──`))}\n`,
     );
 
+    // Auto-bump package.json patch on top-level ships with pending changes.
+    if (process.env.__CHI_NESTED !== "1") {
+      const flowDirty = git(["-C", repoRoot, "status", "--porcelain"]).stdout.trim();
+      if (flowDirty) maybeBumpPatchVersion(repoRoot);
+    }
+
     const commitRc = await commitRun(["--yes"]);
     if (commitRc !== 0) return commitRc;
 
@@ -525,6 +595,12 @@ export async function run(argv: string[]): Promise<number> {
 
   // Compact path: nothing in the working tree → one-line status, skip commit.
   const dirty = git(["-C", repoRoot, "status", "--porcelain"]).stdout.trim();
+  // Auto-bump package.json patch on top-level ships when there are pending
+  // changes — the bump joins the same commit instead of producing churn-only
+  // commits. Skips submodule recursion (__CHI_NESTED) and non-Node repos.
+  if (dirty && process.env.__CHI_NESTED !== "1") {
+    maybeBumpPatchVersion(repoRoot);
+  }
   if (!dirty) {
     if (needForceWithLease) {
       process.stdout.write(
