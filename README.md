@@ -26,7 +26,14 @@ Requires Node 20+.
 npm install -g github:chevp/chi
 ```
 
-Installs the prebuilt `dist/` from the github tarball and places `chi` on PATH via npm's global bin.
+Installs the prebuilt `dist/` from the github tarball and places three binaries on PATH via npm's global bin: `chi`, `che`, and `jan`. All three resolve to the same launcher; each presents itself with its invoked name in help text and error prefixes (see [ADR-008](context/adr/ADR-008-unified-binary-aliases.md)).
+
+If a previous standalone `che-cli` or `jan-cli` is installed, uninstall it first so npm can claim the `che` / `jan` names:
+
+```sh
+npm uninstall -g che-cli jan-cli
+npm install -g github:chevp/chi
+```
 
 ### From a local clone (development)
 

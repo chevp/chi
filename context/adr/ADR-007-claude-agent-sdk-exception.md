@@ -1,9 +1,12 @@
 ---
 id: ADR-007
 type: ADR
-status: proposed
+status: accepted
 proposed-by: ai
 proposed-at: 2026-05-11
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-11
 supersedes: —
 narrows: ADR-003
 related: CTX-002-ai-orchestration-providers.md
@@ -12,7 +15,10 @@ related: CTX-002-ai-orchestration-providers.md
 # ADR-007: Narrow Exception to Zero-Runtime-Dependencies for AI Orchestration SDKs
 
 ## Status
-Proposed.
+Accepted (2026-05-11). The actual `dependencies` entry is added during
+PRD-003 implementation — accepting this ADR authorises that change but
+does not perform it. EXP-002 may install the SDK transiently
+(`npm install --no-save`) for its low-fidelity prototype run.
 
 ## Context
 

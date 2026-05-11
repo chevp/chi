@@ -5,7 +5,9 @@
   "description": "Personal CLI utilities — Node.js port of che-cli",
   "type": "module",
   "bin": {
-    "chi": "bin/chi"
+    "chi": "bin/chi",
+    "che": "bin/chi",
+    "jan": "bin/chi"
   },
   "files": [
     "bin",

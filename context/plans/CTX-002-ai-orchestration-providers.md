@@ -1,12 +1,25 @@
 ---
 id: CTX-002
 type: CTX
-status: proposed
+status: approved
 gate: G1
 proposed-by: ai
 proposed-at: 2026-05-11
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-11
+amended-at: 2026-05-11
 supersedes: —
 related: PROP-007-chevix-agents-consult.md
+adrs: ADR-007-claude-agent-sdk-exception.md, ADR-008-xstate-narrow-exception.md
+evidence:
+  hypothesis: A new orchestration layer above Provider, the high-level claude-agent-sdk, a stable state-machine library (XState) wrapping the SDK iterator, and a "consult + plan + workspace-awareness" command set is the right v1 surface for AI orchestration in chi.
+  result: User confirmed all four architectural choices via AskUserQuestion (2026-05-11) — SDK = claude-agent-sdk, scope = full stack + workspace-awareness, seam = orchestrator above provider, state machine = XState scoped to the orchestrator. Defaults #4–#8 accepted with refinement on #8 (key blocks only claude-agent-backed commands).
+  reasoning: Choices match user's stated goal ("verschiedene provider für ai-orchestrierung, neue commands, anthropic SDK, ask-user-questions, stable state-machine library — kein hardcore code"). The orchestrator-above-provider seam keeps cura/ollama working unchanged; the SDK choice trades 1500–2500 LoC of security-sensitive hand-rolled code for one well-scoped dep behind ADR-007. The XState choice replaces ad-hoc imperative control flow with a typed, inspectable state machine behind ADR-008. The #8 refinement makes the cost of adoption strictly opt-in.
+amendment-log:
+  - date: 2026-05-11
+    by: chevp
+    change: Added Decision #9 (state-machine basis = XState, orchestrator-scoped). System spec section "Orchestrator interface" rewritten to be state-machine based. New hypothesis H4 added. ADR-008 added to authorise the xstate dep. EXP-002 prototype script updated to cover the state-machine wrapper.
 ---
 
 # CTX-002 — AI-Orchestration Providers & Framework-aware CLI
@@ -81,6 +94,24 @@ re-implement Read/Edit/Bash. Custom tools chi will need:
   return structured `tool_result` blocks the model treats as first-class),
   H2 is dead and we fall back to the low-level `@anthropic-ai/sdk` and
   implement the loop ourselves. This re-opens the SDK choice decision.
+
+**H4 — A single XState v5 machine cleanly wraps the Agent SDK's async
+iterator without re-implementing the SDK's tool loop.**
+The SDK already runs its own internal tool loop (it calls our registered
+`chi.ask_user` tool function, waits for the result, then continues).
+Our state machine therefore does **not** replace the loop — it observes
+the SDK's emitted events (`assistant`, `tool_use`, `result`) via a
+single `fromCallback` actor, transitions accordingly, and exposes a
+stable, typed `Snapshot` for CLI rendering, audit, and tests. Imperative
+control flow (`for await { if (...) }`) is fully replaced.
+
+- *Kill criterion:* if wrapping the SDK iterator in a single
+  `fromCallback` actor (≤ 40 LoC of glue) cannot produce all four
+  observable transitions (`idle → running → executingTool →
+  awaitingUser → running → done`) in the EXP-002 prototype, H4 dies and
+  we either (a) move to a multi-actor architecture inside the same
+  machine, or (b) escalate to Alternative A from ADR-008 (in-tree FSM)
+  and revisit the state-machine choice.
 
 **H3 — Workspace-mode detection is a 20-line resolver, not a new
 subsystem.**
@@ -200,29 +231,83 @@ the cwd that gets handed to the Agent SDK (`options.cwd`).
 
 ```
 src/
-  provider/           ← unchanged (cura, ollama, generate-only)
+  provider/                    ← unchanged (cura, ollama, generate-only)
     types.ts
     cura.ts
     ollama.ts
     index.ts
-  orchestrator/       ← NEW
-    types.ts          ← Orchestrator, OrchestratorOptions, AskUserHandler
-    claude-agent.ts   ← @anthropic-ai/claude-agent-sdk wrapper
-    ask-user.ts       ← readline Q&A
-    tools/            ← in-process tool definitions
-      chi-plan.ts     ← chi.plan.create / chi.plan.list
-      chi-ask-user.ts ← chi.ask_user (delegates to ask-user.ts)
-    index.ts          ← getOrchestrator() picker
-  workspace.ts        ← NEW: resolveWorkspaceRoot()
+  orchestrator/                ← NEW
+    types.ts                   ← public types: Orchestrator, OrchestratorOptions,
+                                  OrchestratorEvent, Snapshot, AskUserHandler
+    state-machine.ts           ← XState v5 machine definition (single file,
+                                  authoritative). Per ADR-008.
+    claude-agent.ts            ← thin facade: wraps state-machine.ts as the
+                                  exported Orchestrator instance.
+    sdk-actor.ts               ← fromCallback actor: pumps @anthropic-ai/
+                                  claude-agent-sdk's async iterator into
+                                  machine events.
+    ask-user.ts                ← readline Q&A; default AskUserHandler.
+    tools/                     ← in-process tool definitions
+      chi-plan.ts              ← chi.plan.create / chi.plan.list
+      chi-ask-user.ts          ← chi.ask_user (delegates to ask-user.ts)
+    index.ts                   ← getOrchestrator() picker
+  workspace.ts                 ← NEW: resolveWorkspaceRoot()
   commands/
-    consult.ts        ← NEW
-    plan.ts           ← NEW
+    consult.ts                 ← NEW: drives orchestrator via Snapshot subscription
+    plan.ts                    ← NEW
     ... (existing)
 ```
 
-**`Orchestrator` interface (proposed).**
+**Architectural rule (per ADR-008).** Only files inside
+`src/orchestrator/` import `xstate` or `@anthropic-ai/claude-agent-sdk`.
+Command files subscribe to the orchestrator's typed `Snapshot` stream and
+never see the underlying machine or SDK types.
+
+**State machine (XState v5, single machine).**
+
+```
+                               ┌─────────┐
+                               │  idle   │
+                               └────┬────┘
+                          START(prompt, options)
+                                    ▼
+                           ┌────────────────┐
+                           │    running     │     ◄─── parent state
+                           │  (initial:     │
+                           │   receiving)   │
+                           └───┬────────────┘
+        ┌──────────────────────┼─────────────────────┐
+        ▼                      ▼                     ▼
+   receivingText        executingTool          (transient)
+        │                    │                       │
+        │           ┌────────┴────────┐              │
+        │           ▼                 ▼              │
+        │     builtInTool        chiAskUser          │
+        │   (Read/Glob/Grep      (readline           │
+        │    handled by SDK)      pause)             │
+        │           │                 │              │
+        └───────────┴─────────────────┘──────────────┘
+                              │
+                  RESULT(stopReason, cost)
+                              ▼
+                       ┌───────────┐
+                       │   done    │   ◄─── final
+                       └───────────┘
+
+Cross-cutting transitions (any non-final state):
+  ERROR(e)           → terminated.error
+  USER_CANCELLED     → terminated.userCancelled
+```
+
+States are exhaustive and TypeScript-checked via `setup({ types: ... })`.
+Adding a new state (e.g. `pausedForPermissionPrompt` if `acceptEdits`
+ever needs an interactive callback) is a one-place edit.
+
+**`Orchestrator` interface (revised — Snapshot-based, not iterator-based).**
 
 ```ts
+import type { Actor, Snapshot as XStateSnapshot } from "xstate";
+
 export interface OrchestratorOptions {
   cwd: string;                          // resolved via workspace.ts
   permissionMode: "plan" | "acceptEdits" | "bypassPermissions";
@@ -236,17 +321,41 @@ export interface AskUserHandler {
   prompt(question: string, options?: string[]): Promise<string>;
 }
 
+/** Stable, narrow view chi commands subscribe to. Hides xstate. */
+export interface Snapshot {
+  state:
+    | "idle"
+    | "running.receivingText"
+    | "running.executingTool.builtInTool"
+    | "running.executingTool.chiAskUser"
+    | "done"
+    | "terminated.error"
+    | "terminated.userCancelled";
+  lastAssistantText?: string;
+  pendingToolName?: string;        // when state is running.executingTool.*
+  pendingQuestion?: string;        // when state is running.executingTool.chiAskUser
+  tokens?: { input: number; output: number };
+  error?: { message: string; cause?: unknown };
+}
+
 export interface Orchestrator {
   readonly name: "claude-agent";
   ping(): Promise<boolean>;
-  /** Multi-turn run. Streams messages via the async iterator. */
-  run(opts: OrchestratorOptions, prompt: string): AsyncIterable<OrchestratorEvent>;
+  /** Start a run. Returns an actor; subscribe for Snapshot updates. */
+  start(opts: OrchestratorOptions, prompt: string): {
+    subscribe(listener: (snap: Snapshot) => void): { unsubscribe(): void };
+    send(event: { type: "USER_CANCELLED" }): void;
+    done: Promise<Snapshot>; // resolves on final state
+  };
 }
 ```
 
-**Event types** (assistant text, tool-use audit log, result/cost summary)
-are deliberately narrower than the SDK's raw message types so we can swap
-the SDK if H2 dies without changing command code.
+The `Snapshot` union is what command code (e.g.
+[src/commands/consult.ts](../../src/commands/consult.ts)) renders. It is
+deliberately narrower than xstate's internal snapshot type so we can
+swap state-machine libraries (Alternative A in ADR-008) without
+changing command code — same defensive boundary as we already enforce
+for the SDK in CTX-002.
 
 **Defaults that lock-in safety.**
 
@@ -302,10 +411,16 @@ the SDK if H2 dies without changing command code.
 
 ## ADRs
 
-- **ADR-007 (proposed)** — "Narrow exception to ADR-003 for AI
-  orchestration SDKs." Records the carve-out, the security defaults
-  (`permissionMode: "plan"` default, opt-in bash), and the rule that any
-  *further* runtime dependency still requires its own ADR.
+- **[ADR-007](../adr/ADR-007-claude-agent-sdk-exception.md) (accepted)**
+  — Narrow exception to ADR-003 for `@anthropic-ai/claude-agent-sdk`.
+  Records the carve-out, the security defaults (`permissionMode: "plan"`
+  default, opt-in bash), and the rule that any further runtime
+  dependency still requires its own ADR.
+- **[ADR-008](../adr/ADR-008-xstate-narrow-exception.md) (proposed)**
+  — Second narrow exception to ADR-003 for `xstate` v5+, scoped strictly
+  to the orchestrator subtree. Added after the 2026-05-11 amendment to
+  CTX-002 (user requirement: "stable state-machine in a Node.js library,
+  not hardcore code"). Authorises the dep used by `state-machine.ts`.
 
 ## Kill Criteria
 
@@ -334,6 +449,7 @@ authoring this plan:
 | 1 | Which SDK? | `@anthropic-ai/claude-agent-sdk` (high-level) | One new dep, one ADR; tool-loop owned by SDK |
 | 2 | Command scope? | Full stack incl. workspace-awareness | This plan adds `consult` + `plan` + workspace resolver; `gate`/`approve` deferred to CTX-003 to keep v1 shippable |
 | 3 | Provider seam? | New orchestrator layer above Provider | `Provider` interface untouched; H1 codifies the boundary |
+| 9 | State-machine basis? | `xstate` v5, scoped to the orchestrator subtree | Second narrow exception (ADR-008). User requirement: "stable state-machine, not hardcore code." H4 added to validate the wrapping pattern. |
 
 Remaining defaults — confirmed by user 2026-05-11 (awaiting formal
 `/approve` to flip frontmatter `decided-by`/`approved-by`):
@@ -356,21 +472,26 @@ existing [src/config.ts](../../src/config.ts) gains the
 `anthropic_api_key` → `ANTHROPIC_API_KEY` mapping but does **not** treat
 the key as required.
 
-## Acceptance criteria for G1 → G2
+## Acceptance criteria for G1 → G2 — **all met 2026-05-11**
 
 - [x] User has approved the three SDK / scope / seam choices captured in
       the "Open questions — proposed defaults" table above. *(2026-05-11)*
 - [x] User has approved the five remaining defaults (#4–#8), with #8
       refined to "key blocks **only** claude-agent-backed commands; all
       pre-existing commands keep working without it." *(2026-05-11)*
-- [ ] H1, H2, H3 stand (no falsifying evidence raised in review).
-- [ ] Risks R1–R5 acknowledged; mitigations agreed.
-- [ ] Scope (in/out) signed off — in particular the deferral of
-      `chi gate` / `chi approve` to CTX-003.
-- [ ] ADR-007 draft reviewed (does it acceptably narrow ADR-003?).
-- [ ] Frontmatter flipped to `decided-by: chevp` / `approved-by: chevp`
-      / `approved-at: <date>` on this plan **and** on ADR-007. Per
-      framework rule, only the human writes these fields.
+- [x] H1, H2, H3 stand — no falsifying evidence raised in review.
+      Verification of each will happen in EXP-002 (prototype run).
+- [x] Risks R1–R5 acknowledged; mitigations agreed. R3 (permission-mode
+      footgun) is the highest residual risk and gets re-tested in EXP-002.
+- [x] Scope (in/out) signed off. `chi gate` / `chi approve` deferred to
+      CTX-003 confirmed.
+- [x] ADR-007 draft reviewed and approved alongside this plan.
+- [x] Frontmatter flipped to `status: approved` / `decided-by: chevp` /
+      `approved-by: chevp` / `approved-at: 2026-05-11` on both this plan
+      and ADR-007.
+
+**G1 closed. Next: EXP-002** (Exploration-A, problem-exploration mode).
+See [EXP-002-h2-orchestrator-prototype.md](EXP-002-h2-orchestrator-prototype.md).
 
 Once all checked, this plan moves to **EXP-002** (Exploration-B:
 prototype `Orchestrator.run()` end-to-end on a single command, then

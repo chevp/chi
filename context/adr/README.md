@@ -11,5 +11,6 @@ One file per decision: `ADR-NNN-<short-title>.md`. Use [the framework template](
 | [ADR-003](ADR-003-zero-runtime-dependencies.md) | Zero runtime dependencies | Accepted |
 | [ADR-005](ADR-005-bundled-workflow-fallback.md) | Bundled workflow fallback | Accepted |
 | [ADR-006](ADR-006-worktree-parallelization.md) | Worktrees as the parallelism primitive | Accepted |
+| [ADR-008](ADR-008-unified-binary-aliases.md) | chi is the single binary — `che` and `jan` are bin aliases | Accepted |
 
 When you add a new ADR, also append a row to the index above once approved.
