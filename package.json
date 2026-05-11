@@ -1,6 +1,6 @@
 {
   "name": "chi",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "private": true,
   "description": "Personal CLI utilities — Node.js port of che-cli",
   "type": "module",
