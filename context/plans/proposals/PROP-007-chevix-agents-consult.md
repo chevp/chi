@@ -1,10 +1,19 @@
 ---
 id: PROP-007
 type: PROP
-status: open
+status: promoted
 proposed-by: chevp+ai
 proposed-at: 2026-05-02
+promoted-to: CTX-002-ai-orchestration-providers.md
+promoted-at: 2026-05-11
 ---
+
+> **Promoted** to [CTX-002 — AI-Orchestration Providers & Framework-aware
+> CLI](../CTX-002-ai-orchestration-providers.md) on 2026-05-11. The
+> chevix-agents routing question (vendoring A–D) is *not* part of CTX-002
+> v1 scope — CTX-002 ships `chi consult` against the Anthropic Agent SDK
+> directly. Agent-name routing returns as a follow-up once CTX-002 reaches
+> G3.
 
 # PROP-007 — `chi consult` / agent-driven situational awareness
 
