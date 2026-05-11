@@ -205,6 +205,31 @@ async function selfUpdateFromGithub() {
     process.stdout.write("\n");
     return 0;
 }
+/**
+ * Decide where to pack from. Priority:
+ *   1. If the running binary lives inside a workspace clone, use that path.
+ *   2. Else, if `process.cwd()` is a chi workspace clone (has .git + a
+ *      package.json with name "chi"), use cwd.
+ *   3. Else, no workspace source — caller falls back to github URL install.
+ *
+ * Returns null if no workspace clone could be located.
+ */
+function locateWorkspaceClone(binRoot) {
+    if (existsSync(join(binRoot, ".git")))
+        return binRoot;
+    const cwd = process.cwd();
+    if (existsSync(join(cwd, ".git"))) {
+        try {
+            const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
+            if (pkg.name === "chi")
+                return cwd;
+        }
+        catch {
+            // not a chi clone, fall through
+        }
+    }
+    return null;
+}
 async function selfUpdate() {
     const invokedBin = process.argv[1] ?? "";
     const realBin = invokedBin ? realpathSync(invokedBin) : "";
@@ -213,19 +238,26 @@ async function selfUpdate() {
         process.stderr.write(`${BIN_NAME} update: could not locate the chi package root from ${realBin}\n`);
         return 1;
     }
-    // Distinguish (a) a workspace clone (running binary realpath-resolves into a
-    // git checkout) from (b) a true global install (no .git). Both can be
-    // invoked through a symlink in <npm root -g>; what makes it a "workspace
-    // clone" is the presence of .git at the package root.
-    const isWorkspaceClone = existsSync(join(root, ".git"));
+    // Find a workspace clone to pack from: prefer the running binary's root if
+    // it's a clone (the npm-link case), otherwise use the current working dir
+    // if it's a chi clone. If neither, we're a true global install with no
+    // local source — fall back to github URL install.
+    const workspaceClone = locateWorkspaceClone(root);
     const npmRootRes = execSync("npm", ["root", "-g"]);
     const npmGlobalDir = npmRootRes.ok ? npmRootRes.stdout.trim() : "";
     const npmGlobalPkg = npmGlobalDir ? join(npmGlobalDir, "chi") : "";
-    const oldVersion = readPackageVersion(root);
+    const oldVersion = readPackageVersion(workspaceClone ?? root);
     section(`== self-update ==`);
-    kv("location", isWorkspaceClone
-        ? `workspace clone (${root})`
-        : `global install (${root})`);
+    if (workspaceClone === root) {
+        kv("location", `workspace clone (${root})`);
+    }
+    else if (workspaceClone) {
+        kv("location", `global install (${root})`);
+        kv("workspace clone", `${workspaceClone} ${c.dim("(via cwd)")}`);
+    }
+    else {
+        kv("location", `global install (${root})`);
+    }
     if (invokedBin && invokedBin !== realBin) {
         kv("invoked as", `${invokedBin} → ${realBin}`);
     }
@@ -236,10 +268,10 @@ async function selfUpdate() {
         kv("install target", c.yellow("npm root -g failed — npm install -g may not be available"));
     }
     kv("current version", `v${oldVersion ?? "?"}`);
-    kv("source", isWorkspaceClone ? `${root} (pack-and-install)` : REMOTE);
+    kv("source", workspaceClone ? `${workspaceClone} (pack-and-install)` : REMOTE);
     process.stdout.write("\n");
-    if (isWorkspaceClone) {
-        return selfUpdateFromWorkspaceClone(root, oldVersion);
+    if (workspaceClone) {
+        return selfUpdateFromWorkspaceClone(workspaceClone, oldVersion);
     }
     return selfUpdateFromGithub();
 }
