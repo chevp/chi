@@ -442,6 +442,7 @@ export async function run(argv: string[]): Promise<number> {
   if (!git(["-C", repoRoot, "symbolic-ref", "-q", "HEAD"]).ok) {
     const detachedSha = git(["-C", repoRoot, "rev-parse", "HEAD"]).stdout.trim();
     let recoverBranch = "";
+    let recoverFromRemote = false;
     if (existsSync(marker)) {
       recoverBranch = readMarker(marker).branch;
       if (
@@ -466,11 +467,61 @@ export async function run(argv: string[]): Promise<number> {
         .filter(Boolean);
       recoverBranch = list[0] ?? "";
     }
+    if (!recoverBranch) {
+      // Common for submodules: the parent pins a SHA that lives on a remote
+      // branch but no local branch has been created for it yet. Fall back to
+      // remote-tracking refs and create/fast-forward a local branch.
+      const remoteList = git([
+        "-C", repoRoot, "for-each-ref",
+        "--format=%(refname:short)",
+        "--contains", detachedSha,
+        "refs/remotes/origin/",
+      ]).stdout
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s && !s.endsWith("/HEAD"));
+      if (remoteList.length > 0) {
+        const headRef = git([
+          "-C", repoRoot, "symbolic-ref", "--quiet", "--short",
+          "refs/remotes/origin/HEAD",
+        ]);
+        const preferred = headRef.ok ? headRef.stdout.trim() : "";
+        const pick = preferred && remoteList.includes(preferred)
+          ? preferred
+          : remoteList[0]!;
+        recoverBranch = pick.replace(/^origin\//, "");
+        recoverFromRemote = true;
+      }
+    }
     if (recoverBranch) {
-      const co = git(["-C", repoRoot, "checkout", recoverBranch]);
+      let co;
+      if (recoverFromRemote) {
+        const remoteRef = `origin/${recoverBranch}`;
+        const localExists = git([
+          "-C", repoRoot, "show-ref", "--verify", "--quiet",
+          `refs/heads/${recoverBranch}`,
+        ]).ok;
+        // Only fast-forward an existing local branch — never reset one that
+        // has commits the remote doesn't contain. If it has diverged, fall
+        // back to a plain checkout and let the user reconcile.
+        const safeToReset =
+          !localExists ||
+          git([
+            "-C", repoRoot, "merge-base", "--is-ancestor",
+            recoverBranch, remoteRef,
+          ]).ok;
+        co = safeToReset
+          ? git(["-C", repoRoot, "checkout", "-B", recoverBranch, remoteRef])
+          : git(["-C", repoRoot, "checkout", recoverBranch]);
+      } else {
+        co = git(["-C", repoRoot, "checkout", recoverBranch]);
+      }
       if (co.ok) {
+        const trackingNote = recoverFromRemote
+          ? c.dim(` (tracking origin/${recoverBranch})`)
+          : "";
         process.stdout.write(
-          `${sym.ok} ${c.dim(`${BIN_NAME} ship:`)} recovered from detached HEAD, switched to ${c.cyan(`'${recoverBranch}'`)}\n`,
+          `${sym.ok} ${c.dim(`${BIN_NAME} ship:`)} recovered from detached HEAD, switched to ${c.cyan(`'${recoverBranch}'`)}${trackingNote}\n`,
         );
       } else {
         process.stdout.write(
@@ -479,7 +530,7 @@ export async function run(argv: string[]): Promise<number> {
       }
     } else {
       process.stdout.write(
-        `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} detached HEAD at ${c.yellow(detachedSha.slice(0, 12))} ${c.dim("(no branch contains this commit)")}\n`,
+        `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} detached HEAD at ${c.yellow(detachedSha.slice(0, 12))} ${c.dim("(no local or remote branch contains this commit)")}\n`,
       );
     }
   }

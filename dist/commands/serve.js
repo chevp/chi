@@ -1,15 +1,16 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { BIN_NAME } from "../identity.js";
-const STATIC_FILES = {
-    "/": { rel: "index.html", type: "text/html; charset=utf-8" },
-    "/index.html": { rel: "index.html", type: "text/html; charset=utf-8" },
-    "/styles.css": { rel: "styles.css", type: "text/css; charset=utf-8" },
-    "/app.js": { rel: "app.js", type: "application/javascript; charset=utf-8" },
+const STATIC_EXT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
 };
 const TOOLS = new Set(["status", "doctor", "help", "config"]);
 const CURA_DEFAULT_URL = "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
@@ -57,10 +58,10 @@ Routes (same-origin):
 /** Resolve the static-assets directory, regardless of where chi runs from. */
 function staticRoot() {
     const here = dirname(fileURLToPath(import.meta.url));
-    const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console");
+    const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console-v2");
     const candidates = [
         fallback,
-        resolve(here, "..", "..", "..", "context", "prototypes", "ux-console"),
+        resolve(here, "..", "..", "..", "context", "prototypes", "ux-console-v2"),
     ];
     for (const c of candidates) {
         if (existsSync(join(c, "index.html")))
@@ -335,27 +336,38 @@ async function handleRun(req, res) {
 }
 async function handleStatic(req, res, root) {
     const url = req.url ?? "/";
-    const key = url.split("?")[0] ?? "/";
-    const entry = STATIC_FILES[key];
-    if (!entry) {
+    let pathname = decodeURIComponent(url.split("?")[0] ?? "/");
+    if (pathname === "/")
+        pathname = "/index.html";
+    // Reject URI-encoded traversal or absolute paths up front.
+    if (pathname.includes("\0") || pathname.includes("..") || !pathname.startsWith("/")) {
+        res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("forbidden");
+        return;
+    }
+    const dot = pathname.lastIndexOf(".");
+    const ext = dot >= 0 ? pathname.slice(dot).toLowerCase() : "";
+    const contentType = STATIC_EXT_TYPES[ext];
+    if (!contentType) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("not found");
         return;
     }
-    const path = normalize(join(root, entry.rel));
-    if (!path.startsWith(root)) {
-        res.writeHead(403);
+    const rootResolved = resolve(root);
+    const target = normalize(join(rootResolved, pathname));
+    if (target !== rootResolved && !target.startsWith(rootResolved + sep)) {
+        res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("forbidden");
         return;
     }
     try {
-        const body = await readFile(path);
-        res.writeHead(200, { "Content-Type": entry.type, "Cache-Control": "no-cache" });
+        const body = await readFile(target);
+        res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache" });
         res.end(body);
     }
     catch {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(`missing static asset: ${entry.rel}`);
+        res.end(`missing static asset: ${pathname.replace(/^\//, "")}`);
     }
 }
 function openInBrowser(url) {
@@ -379,7 +391,7 @@ export async function run(argv) {
     const root = staticRoot();
     if (!existsSync(join(root, "index.html"))) {
         process.stderr.write(`${BIN_NAME} serve: static assets not found at ${root}\n` +
-            "Reinstall chi or check that context/prototypes/ux-console/ ships in the package.\n");
+            "Reinstall chi or check that context/prototypes/ux-console-v2/ ships in the package.\n");
         return 1;
     }
     const server = createServer(async (req, res) => {
