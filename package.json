@@ -13,7 +13,8 @@
     "bin",
     "dist",
     ".che",
-    "scripts"
+    "scripts",
+    "context/prototypes/ux-console"
   ],
   "scripts": {
     "build": "tsc",

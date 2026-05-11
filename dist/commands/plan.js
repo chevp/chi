@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { c } from "../ui.js";
 import { BIN_NAME } from "../identity.js";
-import { resolveWorkspaceRoot } from "../workspace.js";
+import { resolveRepoRoot } from "../workspace.js";
 const HELP = `${BIN_NAME} plan — scaffold and list framework plan artifacts.
 
 Usage:
@@ -94,8 +94,8 @@ function planNew(args) {
         process.stderr.write(`${BIN_NAME} plan new: unknown type '${typeArg}' (expected CTX|EXP|PRD|PROP|ADR)\n`);
         return 1;
     }
-    const ws = resolveWorkspaceRoot(process.cwd());
-    const folder = planFolder(ws.root, type);
+    const repoRoot = resolveRepoRoot(process.cwd());
+    const folder = planFolder(repoRoot, type);
     mkdirSync(folder, { recursive: true });
     const seq = nextSequence(folder, type);
     const id = `${type}-${seq}`;
@@ -115,16 +115,25 @@ function planList(args) {
         }
         filter = upper;
     }
-    const ws = resolveWorkspaceRoot(process.cwd());
-    const folders = filter
-        ? [{ type: filter, folder: planFolder(ws.root, filter) }]
-        : PLAN_TYPES.map((t) => ({ type: t, folder: planFolder(ws.root, t) }));
+    const repoRoot = resolveRepoRoot(process.cwd());
+    // Dedup: CTX/EXP/PRD/PROP all live under context/plans/, ADR under context/adr/.
+    // Iterate folders, then prefix-match the type when filtering.
+    const folderToTypes = new Map();
+    for (const t of PLAN_TYPES) {
+        if (filter && t !== filter)
+            continue;
+        const folder = planFolder(repoRoot, t);
+        const arr = folderToTypes.get(folder) ?? [];
+        arr.push(t);
+        folderToTypes.set(folder, arr);
+    }
     let printed = 0;
-    for (const { folder } of folders) {
+    for (const [folder, types] of folderToTypes) {
         if (!existsSync(folder))
             continue;
+        const typePrefix = new RegExp(`^(${types.join("|")})-\\d{3}-`);
         for (const entry of readdirSync(folder).sort()) {
-            if (!entry.endsWith(".md") || !/^[A-Z]+-\d{3}-/.test(entry))
+            if (!entry.endsWith(".md") || !typePrefix.test(entry))
                 continue;
             const full = join(folder, entry);
             const status = readStatus(full);

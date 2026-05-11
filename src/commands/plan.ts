@@ -128,15 +128,23 @@ function planList(args: string[]): number {
     }
     filter = upper;
   }
-  const ws = resolveWorkspaceRoot(process.cwd());
-  const folders: { type: PlanType; folder: string }[] = filter
-    ? [{ type: filter, folder: planFolder(ws.root, filter) }]
-    : PLAN_TYPES.map((t) => ({ type: t, folder: planFolder(ws.root, t) }));
+  const repoRoot = resolveRepoRoot(process.cwd());
+  // Dedup: CTX/EXP/PRD/PROP all live under context/plans/, ADR under context/adr/.
+  // Iterate folders, then prefix-match the type when filtering.
+  const folderToTypes = new Map<string, PlanType[]>();
+  for (const t of PLAN_TYPES) {
+    if (filter && t !== filter) continue;
+    const folder = planFolder(repoRoot, t);
+    const arr = folderToTypes.get(folder) ?? [];
+    arr.push(t);
+    folderToTypes.set(folder, arr);
+  }
   let printed = 0;
-  for (const { folder } of folders) {
+  for (const [folder, types] of folderToTypes) {
     if (!existsSync(folder)) continue;
+    const typePrefix = new RegExp(`^(${types.join("|")})-\\d{3}-`);
     for (const entry of readdirSync(folder).sort()) {
-      if (!entry.endsWith(".md") || !/^[A-Z]+-\d{3}-/.test(entry)) continue;
+      if (!entry.endsWith(".md") || !typePrefix.test(entry)) continue;
       const full = join(folder, entry);
       const status = readStatus(full);
       process.stdout.write(`  ${c.dim(status.padEnd(10))} ${resolve(full)}\n`);

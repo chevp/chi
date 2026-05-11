@@ -17,6 +17,7 @@ import * as workCmd from "./commands/work.js";
 import * as releaseCmd from "./commands/release.js";
 import * as consultCmd from "./commands/consult.js";
 import * as planCmd from "./commands/plan.js";
+import * as serveCmd from "./commands/serve.js";
 import { resolveTrigger } from "./workflow/loader.js";
 const COMMANDS = {
     status: statusCmd.run,
@@ -36,6 +37,7 @@ const COMMANDS = {
     release: releaseCmd.run,
     consult: consultCmd.run,
     plan: planCmd.run,
+    serve: serveCmd.run,
     help: helpCmd.run,
     "-h": helpCmd.run,
     "--help": helpCmd.run,

@@ -43,6 +43,7 @@ Commands:
                       e.g. '${n} config provider claude-code'
   doctor [target]     verify deps and providers (git, gh, docker, ollama,
                       claude-code, copilot, workflow)
+  serve [--port N]    start the local web console (chat UI over cura)
   help                show this message
 
 Run '${n} <command> --help' for command-specific options.
