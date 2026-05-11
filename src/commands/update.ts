@@ -1,11 +1,13 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { execInherit } from "../spawn.js";
+import { execInherit, execSync } from "../spawn.js";
 import { git, isInsideRepo, repoRoot as getRepoRoot } from "../git/index.js";
 import { discoverRepos, repoLabel } from "../workspace.js";
 import { recoverRepo, printReport, summarize, type RecoveryReport } from "../recover.js";
 import { c, kv, section } from "../ui.js";
 import { BIN_NAME } from "../identity.js";
+
+const REMOTE = "github:chevp/chi";
 
 const HELP = `${BIN_NAME} update — repair workspace state, then update ${BIN_NAME} itself.
 
@@ -27,18 +29,15 @@ Phase 1: workspace recovery (default).
   <gitDir>/chi-recover-backup-<timestamp>/.
 
 Phase 2: self-update (default).
-  Detects how ${BIN_NAME} was installed and refreshes it in place:
-    - workspace clone (bin resolves into a git repo): git pull --ff-only,
-      then npm install.
-    - npm global install: npm install -g github:chevp/chi.
+  Always reinstalls ${BIN_NAME} from ${REMOTE} via \`npm install -g\`.
+  When the running binary resolves into a workspace clone, the clone itself
+  is left untouched — no \`git pull\`, no in-place \`npm install\`.
 
 Flags:
   --no-recover     skip phase 1
   --no-self        skip phase 2
   -h, --help       show this help
 `;
-
-const REMOTE = "github:chevp/chi";
 
 function findPackageRoot(start: string): string | null {
   let dir = start;
@@ -66,75 +65,12 @@ function versionLine(oldVer: string | null, newVer: string | null): string {
   return `${c.dim(o)} → ${c.green(n)}`;
 }
 
-async function selfUpdateWorkspace(root: string): Promise<number> {
-  const oldVersion = readPackageVersion(root);
-  const oldSha = git(["rev-parse", "HEAD"], root).stdout.trim();
-  const oldShort = git(["rev-parse", "--short", "HEAD"], root).stdout.trim();
-  const branch = git(["symbolic-ref", "--quiet", "--short", "HEAD"], root).stdout.trim() || "(detached)";
-  const upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root).stdout.trim();
-
-  section(`== self-update ==`);
-  kv("location", `workspace clone (${root})`);
-  kv("branch", upstream ? `${branch} ← ${upstream}` : branch);
-  kv("current version", `v${oldVersion ?? "?"} @ ${oldShort || "?"}`);
-  process.stdout.write("\n");
-
-  const pulled = await execInherit("git", ["-C", root, "pull", "--ff-only"]);
-  if (pulled !== 0) return pulled;
-
-  const newSha = git(["rev-parse", "HEAD"], root).stdout.trim();
-  const newShort = git(["rev-parse", "--short", "HEAD"], root).stdout.trim();
-  const newVersion = readPackageVersion(root);
-
-  const installed = await execInherit("npm", ["--prefix", root, "install", "--no-audit", "--no-fund"]);
-  if (installed !== 0) return installed;
-
-  section(`== summary ==`);
-  if (oldSha && oldSha === newSha) {
-    process.stdout.write(`  ${c.green("✓")} already up to date at ${oldShort} (v${oldVersion ?? "?"})\n\n`);
-    return 0;
-  }
-  kv("version", versionLine(oldVersion, newVersion));
-  kv("commit", `${c.dim(oldShort || "?")} → ${c.green(newShort || "?")}`);
-  const commits = git(
-    [
-      "-c", "color.ui=always",
-      "log",
-      `${oldSha}..${newSha}`,
-      "--pretty=format:    %C(auto)%h%Creset %s %C(dim)(%cr)%Creset",
-    ],
-    root,
-  ).stdout;
-  if (commits.trim()) {
-    const count = commits.split("\n").length;
-    kv("commits pulled", String(count));
-    process.stdout.write(`${commits}\n`);
-  }
-  process.stdout.write("\n");
-  return 0;
-}
-
-async function selfUpdateGlobal(root: string): Promise<number> {
-  const oldVersion = readPackageVersion(root);
-
-  section(`== self-update ==`);
-  kv("location", "global install");
-  kv("source", REMOTE);
-  kv("current version", `v${oldVersion ?? "?"}`);
-  process.stdout.write("\n");
-
-  const rc = await execInherit("npm", ["install", "-g", REMOTE]);
-  if (rc !== 0) return rc;
-
-  const newVersion = readPackageVersion(root);
-  section(`== summary ==`);
-  if (oldVersion && oldVersion === newVersion) {
-    process.stdout.write(`  ${c.green("✓")} already up to date at v${oldVersion}\n\n`);
-  } else {
-    kv("version", versionLine(oldVersion, newVersion));
-    process.stdout.write("\n");
-  }
-  return 0;
+function globalPackageVersion(): string | null {
+  const r = execSync("npm", ["root", "-g"]);
+  if (!r.ok) return null;
+  const dir = r.stdout.trim();
+  if (!dir) return null;
+  return readPackageVersion(join(dir, "chi"));
 }
 
 async function selfUpdate(): Promise<number> {
@@ -145,8 +81,37 @@ async function selfUpdate(): Promise<number> {
     return 1;
   }
 
+  const oldVersion = readPackageVersion(root);
   const isWorkspaceClone = existsSync(join(root, ".git"));
-  return isWorkspaceClone ? selfUpdateWorkspace(root) : selfUpdateGlobal(root);
+
+  section(`== self-update ==`);
+  if (isWorkspaceClone) {
+    const oldShort = git(["rev-parse", "--short", "HEAD"], root).stdout.trim();
+    const branch = git(["symbolic-ref", "--quiet", "--short", "HEAD"], root).stdout.trim() || "(detached)";
+    const upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root).stdout.trim();
+    kv("location", `workspace clone (${root})`);
+    kv("branch", upstream ? `${branch} ← ${upstream}` : branch);
+    kv("current version", `v${oldVersion ?? "?"} @ ${oldShort || "?"}`);
+  } else {
+    kv("location", `global install (${root})`);
+    kv("current version", `v${oldVersion ?? "?"}`);
+  }
+  kv("source", REMOTE);
+  process.stdout.write("\n");
+
+  const rc = await execInherit("npm", ["install", "-g", REMOTE]);
+  if (rc !== 0) return rc;
+
+  const newVersion = isWorkspaceClone ? globalPackageVersion() : readPackageVersion(root);
+
+  section(`== summary ==`);
+  if (oldVersion && newVersion && oldVersion === newVersion) {
+    process.stdout.write(`  ${c.green("✓")} already up to date at v${oldVersion}\n\n`);
+  } else {
+    kv("version", versionLine(oldVersion, newVersion));
+    process.stdout.write("\n");
+  }
+  return 0;
 }
 
 function recoverScope(): RecoveryReport[] {
