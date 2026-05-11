@@ -1,15 +1,10 @@
-// <chi-sidebar> — light-DOM component. Owns the sidebar markup: brand,
-// Workspace nav, Tools, Agents, Chats, and connection footer. Talks to
-// the store for state and dispatches actions back through it.
+// <chi-sidebar> — light-DOM. Brand, Workspace (Chat | Workflow), Tools
+// (CLI + agent tools), Agents, Workflows, Chats, connection footer.
 
 import { store } from "../lib/store.js";
 import { AGENTS } from "../lib/agents.js";
-
-const TOOLS = [
-    { id: "status", title: "chi status", icon: "fa-circle-info" },
-    { id: "doctor", title: "chi doctor", icon: "fa-stethoscope" },
-    { id: "help",   title: "chi help",   icon: "fa-circle-question" },
-];
+import { WORKFLOWS } from "../lib/workflows.js";
+import { CLI_TOOLS, AGENT_TOOLS } from "../lib/tools.js";
 
 const escapeHtml = (s) =>
     s.replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -24,8 +19,12 @@ class ChiSidebar extends HTMLElement {
             store.on("sessions", () => this._renderChatList()),
             store.on("active", () => this._renderChatList()),
             store.on("connection", (c) => this._renderConn(c)),
+            store.on("view", () => this._refreshViewActive()),
+            store.on("workflow", () => this._refreshWorkflowActive()),
         ];
         this._renderConn(store.state.connection);
+        this._refreshViewActive();
+        this._refreshWorkflowActive();
     }
 
     disconnectedCallback() {
@@ -36,7 +35,7 @@ class ChiSidebar extends HTMLElement {
         this.innerHTML = `
             <div class="sidebar-brand">
                 <span class="brand-logo">χ</span>
-                <span class="brand-name">chi <small>· Console v2</small></span>
+                <span class="brand-name">chi <small>· Console v3</small></span>
                 <button data-act="collapse" class="icon-btn brand-collapse" type="button" title="Collapse sidebar">
                     <i class="fa-solid fa-bars-staggered" aria-hidden="true"></i>
                 </button>
@@ -45,18 +44,30 @@ class ChiSidebar extends HTMLElement {
             <nav class="sidebar-scroll">
                 <div class="nav-section">
                     <div class="nav-label">Workspace</div>
-                    <button class="nav-item ws-item active" data-view="chat" type="button">
+                    <button class="nav-item ws-item" data-view="chat" type="button">
                         <i class="fa-regular fa-comment" aria-hidden="true"></i>
                         <span>Chat</span>
                     </button>
+                    <button class="nav-item ws-item" data-view="workflow" type="button">
+                        <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
+                        <span>Workflow</span>
+                    </button>
                 </div>
 
-                <div class="nav-section" data-section="tools">
-                    <div class="nav-label">Tools</div>
+                <div class="nav-section" data-section="workflows">
+                    <div class="nav-label">Workflows</div>
                 </div>
 
                 <div class="nav-section" data-section="agents">
                     <div class="nav-label">Agents</div>
+                </div>
+
+                <div class="nav-section" data-section="cli-tools">
+                    <div class="nav-label">CLI tools</div>
+                </div>
+
+                <div class="nav-section" data-section="agent-tools">
+                    <div class="nav-label">Agent tools</div>
                 </div>
 
                 <div class="nav-section" data-section="chats">
@@ -77,28 +88,67 @@ class ChiSidebar extends HTMLElement {
                 </div>
             </div>`;
 
-        const toolsHost = this.querySelector('[data-section="tools"]');
-        for (const t of TOOLS) {
+        this._renderWorkflows();
+        this._renderAgents();
+        this._renderCliTools();
+        this._renderAgentTools();
+        this._renderChatList();
+    }
+
+    _renderWorkflows() {
+        const host = this.querySelector('[data-section="workflows"]');
+        for (const w of WORKFLOWS) {
+            const btn = document.createElement("button");
+            btn.className = "nav-item workflow-item";
+            btn.dataset.workflow = w.id;
+            btn.type = "button";
+            btn.title = w.blurb;
+            btn.innerHTML = `<i class="fa-solid fa-diagram-project" aria-hidden="true"></i><span>${escapeHtml(w.name)}</span>`;
+            host.appendChild(btn);
+        }
+    }
+
+    _renderAgents() {
+        const host = this.querySelector('[data-section="agents"]');
+        for (const a of AGENTS) {
+            const btn = document.createElement("button");
+            btn.className = "nav-item agent-item";
+            if (a.legacy) btn.classList.add("agent-item-legacy");
+            btn.dataset.agent = a.id;
+            btn.type = "button";
+            btn.title = a.blurb;
+            btn.innerHTML = `
+                <i class="fa-solid ${escapeHtml(a.icon)}" aria-hidden="true"></i>
+                <span>${escapeHtml(a.title)}</span>`;
+            host.appendChild(btn);
+        }
+    }
+
+    _renderCliTools() {
+        const host = this.querySelector('[data-section="cli-tools"]');
+        for (const t of CLI_TOOLS) {
             const btn = document.createElement("button");
             btn.className = "nav-item tool-item";
             btn.dataset.tool = t.id;
             btn.type = "button";
-            btn.innerHTML = `<i class="fa-solid ${t.icon}" aria-hidden="true"></i><span>${escapeHtml(t.title)}</span>`;
-            toolsHost.appendChild(btn);
+            btn.title = t.blurb;
+            btn.innerHTML = `<i class="fa-solid ${escapeHtml(t.icon)}" aria-hidden="true"></i><span>${escapeHtml(t.title)}</span>`;
+            host.appendChild(btn);
         }
+    }
 
-        const agentsHost = this.querySelector('[data-section="agents"]');
-        for (const a of AGENTS) {
-            const btn = document.createElement("button");
-            btn.className = "nav-item agent-item";
-            btn.dataset.agent = a.id;
-            btn.type = "button";
-            btn.title = a.blurb;
-            btn.innerHTML = `<i class="fa-solid ${a.icon}" aria-hidden="true"></i><span>${escapeHtml(a.title)}</span>`;
-            agentsHost.appendChild(btn);
+    _renderAgentTools() {
+        const host = this.querySelector('[data-section="agent-tools"]');
+        for (const t of AGENT_TOOLS) {
+            const row = document.createElement("div");
+            row.className = "nav-item agent-tool-item";
+            row.title = t.blurb;
+            row.innerHTML = `
+                <i class="fa-solid ${escapeHtml(t.icon)}" aria-hidden="true"></i>
+                <span>${escapeHtml(t.title)}</span>
+                <span class="agent-tool-meta">read-only</span>`;
+            host.appendChild(row);
         }
-
-        this._renderChatList();
     }
 
     _renderChatList() {
@@ -117,7 +167,10 @@ class ChiSidebar extends HTMLElement {
                 <button class="chat-row-del" type="button" title="Delete chat" aria-label="Delete chat">
                     <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
                 </button>`;
-            row.querySelector(".chat-row-open").addEventListener("click", () => store.switchSession(s.id));
+            row.querySelector(".chat-row-open").addEventListener("click", () => {
+                store.switchSession(s.id);
+                store.setView("chat");
+            });
             row.querySelector(".chat-row-del").addEventListener("click", (e) => {
                 e.stopPropagation();
                 if (confirm(`Delete “${s.title}”?`)) store.deleteSession(s.id);
@@ -133,13 +186,37 @@ class ChiSidebar extends HTMLElement {
         if (t) t.textContent = text;
     }
 
+    _refreshViewActive() {
+        const v = store.state.view;
+        this.querySelectorAll("[data-view]").forEach((btn) => {
+            btn.classList.toggle("active", btn.dataset.view === v);
+        });
+    }
+
+    _refreshWorkflowActive() {
+        const id = store.state.workflowId;
+        this.querySelectorAll("[data-workflow]").forEach((btn) => {
+            btn.classList.toggle("active", btn.dataset.workflow === id);
+        });
+    }
+
     _wire() {
         this.addEventListener("click", (e) => {
             const collapse = e.target.closest('[data-act="collapse"]');
             if (collapse) { this.classList.toggle("collapsed"); return; }
 
             const newChat = e.target.closest('[data-act="new-chat"]');
-            if (newChat) { store.createSession(); return; }
+            if (newChat) { store.createSession(); store.setView("chat"); return; }
+
+            const viewBtn = e.target.closest("[data-view]");
+            if (viewBtn) { store.setView(viewBtn.dataset.view); return; }
+
+            const wfBtn = e.target.closest("[data-workflow]");
+            if (wfBtn) {
+                store.setWorkflow(wfBtn.dataset.workflow);
+                store.setView("workflow");
+                return;
+            }
 
             const toolBtn = e.target.closest("[data-tool]");
             if (toolBtn) {
@@ -147,6 +224,7 @@ class ChiSidebar extends HTMLElement {
                     detail: { name: toolBtn.dataset.tool },
                     bubbles: true,
                 }));
+                store.setView("chat");
                 return;
             }
 
@@ -156,6 +234,7 @@ class ChiSidebar extends HTMLElement {
                     detail: { id: agentBtn.dataset.agent },
                     bubbles: true,
                 }));
+                store.setView("chat");
                 return;
             }
         });

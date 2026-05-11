@@ -47,6 +47,8 @@ class Store {
             connection: { kind: "idle", text: "checking…" },
             busy: false,
             currentRequest: null,
+            view: lsGet(STORAGE_VIEW, "chat"),
+            workflowId: lsGet(STORAGE_WORKFLOW, "chevp-ai-framework"),
         };
         if (this.state.sessions.length === 0) {
             const s = newSessionObject();
@@ -189,6 +191,20 @@ class Store {
         this.state.busy = busy;
         this.state.currentRequest = controller;
         this.emit("busy", busy);
+    }
+
+    setView(view) {
+        if (this.state.view === view) return;
+        this.state.view = view;
+        lsSet(STORAGE_VIEW, view);
+        this.emit("view", view);
+    }
+
+    setWorkflow(id) {
+        if (this.state.workflowId === id) return;
+        this.state.workflowId = id;
+        lsSet(STORAGE_WORKFLOW, id);
+        this.emit("workflow", id);
     }
 }
 

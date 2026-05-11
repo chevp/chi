@@ -4,6 +4,7 @@
 
 import { store } from "../lib/store.js";
 import { AGENT_BY_ID } from "../lib/agents.js";
+import { AGENT_TOOL_BY_ID } from "../lib/tools.js";
 import { apiChatStream, friendlyFetchError } from "../lib/api.js";
 import "./chi-message.js";
 
@@ -23,6 +24,7 @@ const modelNameOf = (id) => (id && id.indexOf("/") > 0 ? id.slice(id.indexOf("/"
 class ChiConversation extends HTMLElement {
     connectedCallback() {
         this.classList.add("main");
+        if (store.state.view !== "chat") this.classList.add("hidden");
         this._render();
         this._wire();
         this._unsubs = [
@@ -30,6 +32,7 @@ class ChiConversation extends HTMLElement {
             store.on("messages", ({ message }) => this._appendIfActive(message)),
             store.on("models", ({ list, active }) => this._renderModels(list, active)),
             store.on("connection", ({ kind, text }) => this._setBusyHint(kind, text)),
+            store.on("view", (v) => this.classList.toggle("hidden", v !== "chat")),
         ];
         this._renderActive();
     }
@@ -246,11 +249,20 @@ class ChiConversation extends HTMLElement {
     _buildAgentBanner(agent) {
         const wrap = document.createElement("div");
         wrap.className = "agent-banner";
+        const tools = (agent.tools || [])
+            .map((id) => AGENT_TOOL_BY_ID[id])
+            .filter(Boolean);
+        const toolsHtml = tools.length === 0 ? "" :
+            `<div class="agent-banner-tools">${tools.map((t) =>
+                `<span class="wf-tool-chip" title="${escapeHtml(t.blurb)}">
+                    <i class="fa-solid ${escapeHtml(t.icon)}" aria-hidden="true"></i>${escapeHtml(t.title)}
+                </span>`).join("")}</div>`;
         wrap.innerHTML = `
-            <span class="agent-banner-icon"><i class="fa-solid ${agent.icon}" aria-hidden="true"></i></span>
+            <span class="agent-banner-icon"><i class="fa-solid ${escapeHtml(agent.icon)}" aria-hidden="true"></i></span>
             <div class="agent-banner-body">
                 <div class="agent-banner-title">${escapeHtml(agent.title)}</div>
                 <div class="agent-banner-blurb">${escapeHtml(agent.blurb)}</div>
+                ${toolsHtml}
             </div>
             <button data-act="clear-agent" class="agent-banner-clear" type="button">remove agent</button>`;
         return wrap;

@@ -76,10 +76,10 @@ Routes (same-origin):
 /** Resolve the static-assets directory, regardless of where chi runs from. */
 function staticRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console-v2");
+  const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console-v3");
   const candidates = [
     fallback,
-    resolve(here, "..", "..", "..", "context", "prototypes", "ux-console-v2"),
+    resolve(here, "..", "..", "..", "context", "prototypes", "ux-console-v3"),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, "index.html"))) return c;
