@@ -12,6 +12,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BIN_NAME } from "../identity.js";
+import { c, sym } from "../ui.js";
 
 const HELP = `${BIN_NAME} commit — stage all changes, generate a commit message via the active LLM, commit.
 
@@ -203,13 +204,17 @@ export async function run(argv: string[]): Promise<number> {
     );
     msg = cleanupMessage(raw);
     if (!msg) {
-      process.stderr.write(`${BIN_NAME} commit: LLM returned empty message — using default message\n`);
+      process.stderr.write(
+        `${sym.warn} ${c.dim(`${BIN_NAME} commit:`)} ${c.yellow("LLM returned empty message")} ${c.dim("— using default message")}\n`,
+      );
     }
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.stderr.write(
-      `${BIN_NAME} commit: message generation failed — using default message\n` +
-        `             run '${BIN_NAME} doctor provider' for diagnostics\n`,
+      `${sym.err} ${c.red(err instanceof Error ? err.message : String(err))}\n`,
+    );
+    process.stderr.write(
+      `${sym.warn} ${c.dim(`${BIN_NAME} commit:`)} ${c.yellow("message generation failed")} ${c.dim("— using default message")}\n` +
+        `             ${c.dim(`run '${BIN_NAME} doctor provider' for diagnostics`)}\n`,
     );
   }
 
@@ -219,10 +224,10 @@ export async function run(argv: string[]): Promise<number> {
   const title = lines[0] ?? "";
   const body = lines.slice(1).join("\n").replace(/^\n+/, "");
 
-  process.stdout.write(`\n→ ${title}\n`);
+  process.stdout.write(`\n${sym.arrow} ${c.bold(title)}\n`);
   if (body.trim()) {
     for (const ln of body.split(/\r?\n/)) {
-      process.stdout.write(`  ${ln}\n`);
+      process.stdout.write(`  ${c.dim(ln)}\n`);
     }
   }
   process.stdout.write("\n");
@@ -234,7 +239,7 @@ export async function run(argv: string[]): Promise<number> {
     const ans = await readLine("commit with this message? [Y/n/e=edit] ");
     const v = (ans ?? "").trim().toLowerCase();
     if (v === "n" || v === "no") {
-      process.stdout.write("aborted\n");
+      process.stdout.write(`${c.yellow("aborted")}\n`);
       return 1;
     }
     if (v === "e") edit = true;

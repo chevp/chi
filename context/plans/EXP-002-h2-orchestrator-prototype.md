@@ -1,11 +1,14 @@
 ---
 id: EXP-002
 type: EXP
-status: proposed
+status: approved
 gate: G2
 exploration-mode: A
 proposed-by: ai
 proposed-at: 2026-05-11
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-11
 supersedes: —
 context-plan: CTX-002-ai-orchestration-providers.md
 adrs: ADR-007-claude-agent-sdk-exception.md, ADR-008-xstate-narrow-exception.md

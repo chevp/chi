@@ -1,5 +1,5 @@
 ---
-id: ADR-008
+id: ADR-009
 type: ADR
 status: accepted
 proposed-by: ai
@@ -11,7 +11,7 @@ supersedes: —
 related: —
 ---
 
-# ADR-008: chi is the single binary — `che` and `jan` are bin aliases
+# ADR-009: chi is the single binary — `che` and `jan` are bin aliases
 
 ## Status
 Accepted (2026-05-11).

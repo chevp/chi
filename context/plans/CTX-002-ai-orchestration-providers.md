@@ -20,6 +20,9 @@ amendment-log:
   - date: 2026-05-11
     by: chevp
     change: Added Decision #9 (state-machine basis = XState, orchestrator-scoped). System spec section "Orchestrator interface" rewritten to be state-machine based. New hypothesis H4 added. ADR-008 added to authorise the xstate dep. EXP-002 prototype script updated to cover the state-machine wrapper.
+  - date: 2026-05-11
+    by: chevp
+    change: Added Decision #10 (orchestrator code lives inside chi for v1, extracted to its own package only when a second non-chi-wrapper consumer appears). Explicit extraction-trigger criteria added to the Out-of-scope section. No structural changes to ADR-007 or ADR-008 — both remain chi-scoped for v1.
 ---
 
 # CTX-002 — AI-Orchestration Providers & Framework-aware CLI
@@ -224,6 +227,49 @@ the cwd that gets handed to the Agent SDK (`options.cwd`).
   H2. The ADR locks the surface; new tools require their own plan entry.
 - Replacing or removing the existing `cura`/`ollama` providers. They
   continue to serve `chi commit` / `chi explain` / `chi issue` unchanged.
+- **Extracting the orchestrator into a separate package
+  (`@chevp/orchestrator`, npm workspaces, or moving it into
+  `chevp-ai-framework`).** v1 lives at `src/orchestrator/` inside this
+  repo. See extraction triggers below.
+
+### Extraction triggers (when to re-open Decision #10)
+
+Spawn a `PROP-NNN-extract-orchestrator.md` *only* when at least one of
+the following is concretely true — not as anticipation, not "we might
+need this":
+
+1. **A second, non-wrapper consumer materialises.** `jan-cli` does
+   *not* count (it is a chi binary alias, not an independent code
+   base). A second consumer means a separate repository with its own
+   `package.json` that wants to call the orchestrator without depending
+   on chi's git helpers, command dispatcher, or config layer. If
+   `che-cli` resurrects and wants the orchestrator, or a new tool in
+   `~/workspace/tools/` is created that needs it — that's the trigger.
+
+2. **A clean API boundary stabilises on its own.** If, after PRD-003
+   ships and a few cycles of real use, the orchestrator's exported
+   surface has had no breaking changes for ≥ 2 months and contains no
+   imports from outside `src/orchestrator/`, that is evidence the
+   boundary is real and extraction is now low-risk. (Today neither
+   condition holds: the orchestrator doesn't exist, and once it does it
+   will probably reach into `src/git/`, `src/ui.ts`, and `src/config.ts`
+   during development.)
+
+3. **Versioning pressure.** If chi has a slow release cadence (driven
+   by git-workflow stability) but the orchestrator needs frequent
+   updates (driven by SDK / state-machine churn), independent SemVer
+   becomes load-bearing. Trigger: ≥ 3 instances within 6 months where
+   "we'd ship the orchestrator change today but chi isn't ready."
+
+4. **Framework integration.** If `chevp-ai-framework` evolves a formal
+   conformance specification ("an orchestrator is conformant iff it
+   exposes `start/subscribe/send` with this `Snapshot` shape"), it
+   makes sense to host the reference implementation alongside the
+   framework rather than inside chi. Trigger: framework adds a
+   `conformance/` directory or otherwise codifies the contract.
+
+When **none** of these are true, in-tree is the correct location and
+re-litigating extraction is wasted effort.
 
 ## System spec — proposed shape
 
@@ -450,6 +496,7 @@ authoring this plan:
 | 2 | Command scope? | Full stack incl. workspace-awareness | This plan adds `consult` + `plan` + workspace resolver; `gate`/`approve` deferred to CTX-003 to keep v1 shippable |
 | 3 | Provider seam? | New orchestrator layer above Provider | `Provider` interface untouched; H1 codifies the boundary |
 | 9 | State-machine basis? | `xstate` v5, scoped to the orchestrator subtree | Second narrow exception (ADR-008). User requirement: "stable state-machine, not hardcore code." H4 added to validate the wrapping pattern. |
+| 10 | Orchestrator in chi or a separate package? | **In chi for v1; extract when a second non-wrapper consumer appears.** | User raised the question 2026-05-11 ("zerschreddert das chi nicht?"). Premature extraction means designing a public API before the orchestrator exists; the cost of "now extract" is double release ceremony with no second consumer. See Out-of-scope for the extraction triggers. |
 
 Remaining defaults — confirmed by user 2026-05-11 (awaiting formal
 `/approve` to flip frontmatter `decided-by`/`approved-by`):

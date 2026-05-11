@@ -1,9 +1,12 @@
 ---
 id: ADR-008
 type: ADR
-status: proposed
+status: accepted
 proposed-by: ai
 proposed-at: 2026-05-11
+decided-by: chevp
+approved-by: chevp
+approved-at: 2026-05-11
 supersedes: —
 narrows: ADR-003
 related: ADR-007-claude-agent-sdk-exception.md, CTX-002-ai-orchestration-providers.md
@@ -12,7 +15,11 @@ related: ADR-007-claude-agent-sdk-exception.md, CTX-002-ai-orchestration-provide
 # ADR-008: Narrow Exception to ADR-003 for State-Machine Library (XState) in the Orchestrator
 
 ## Status
-Proposed.
+Accepted (2026-05-11). The actual `dependencies` entry for `xstate` is
+added during PRD-003 implementation alongside the Agent SDK dep —
+accepting this ADR authorises that change but does not perform it.
+EXP-002 may install xstate transiently (`npm install --no-save`) for
+its low-fidelity prototype run.
 
 ## Context
 

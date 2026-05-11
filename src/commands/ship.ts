@@ -3,7 +3,7 @@ import { existsSync, appendFileSync, mkdirSync, renameSync } from "node:fs";
 import { commandExists, execInherit, execSync } from "../spawn.js";
 import { git, gitDir, isInsideRepo, pushWithRecovery } from "../git/index.js";
 import { resolveConflicts, finalizeRebase } from "../conflict.js";
-import { c } from "../ui.js";
+import { c, sym } from "../ui.js";
 import { BIN_NAME } from "../identity.js";
 import { readMarker } from "./flow.js";
 import { run as commitRun } from "./commit.js";
@@ -86,8 +86,8 @@ async function globalShip(argv: string[]): Promise<number> {
   // ---- 1. Optionally sync the workspace via chevp-setup ------------------
   const cloneScript = join(cwd, "misc", "chevp-setup", "clone-all.py");
   if (!skipClone && existsSync(cloneScript)) {
-    process.stdout.write(`${c.bold("== sync workspace ==")}\n`);
-    process.stdout.write(`  → ${cloneScript.replace(/\\/g, "/")}\n`);
+    process.stdout.write(`${c.bold(c.magenta("== sync workspace =="))}\n`);
+    process.stdout.write(`  ${sym.arrow} ${c.dim(cloneScript.replace(/\\/g, "/"))}\n`);
     const py = commandExists("python")
       ? "python"
       : commandExists("python3")
@@ -120,13 +120,15 @@ async function globalShip(argv: string[]): Promise<number> {
     return 1;
   }
 
-  process.stdout.write(`\n${c.bold(`== ship ${repos.length} repos ==`)}\n`);
+  process.stdout.write(
+    `\n${c.bold(c.magenta(`== ship ${repos.length} repos ==`))}\n`,
+  );
 
   const failures: string[] = [];
   let shipped = 0;
   for (const info of repos) {
     const label = repoLabel(info);
-    process.stdout.write(`\n${c.cyan(`── ${label} ──`)}\n`);
+    process.stdout.write(`\n${c.bold(c.cyan(`── ${label} ──`))}\n`);
     const rc = await execInherit(process.execPath, [SELF_BIN, "ship"], {
       cwd: info.path,
       env: { ...process.env, __CHI_NESTED: "1" },
@@ -138,16 +140,18 @@ async function globalShip(argv: string[]): Promise<number> {
     }
   }
 
-  process.stdout.write(`\n${c.bold("== summary ==")}\n`);
-  process.stdout.write(`  ${shipped}/${repos.length} ok`);
+  process.stdout.write(`\n${c.bold(c.magenta("== summary =="))}\n`);
+  const okPart = `${sym.ok} ${c.green(`${shipped}/${repos.length} ok`)}`;
   if (failures.length > 0) {
-    process.stdout.write(`,  ${c.red(`${failures.length} failed`)}\n`);
+    process.stdout.write(
+      `  ${okPart}${c.dim(",")}  ${sym.err} ${c.red(`${failures.length} failed`)}\n`,
+    );
     for (const f of failures) {
       process.stdout.write(`    ${c.red("✗")} ${f}\n`);
     }
     return 1;
   }
-  process.stdout.write(`\n`);
+  process.stdout.write(`  ${okPart}\n\n`);
   return 0;
 }
 
@@ -196,10 +200,14 @@ export async function run(argv: string[]): Promise<number> {
       if (git(["-C", smAbs, "symbolic-ref", "-q", "HEAD"]).ok) {
         const ff = git(["-C", smAbs, "pull", "--ff-only", "--quiet"]);
         if (!ff.ok) {
-          process.stdout.write(`chi ship: pull failed in ${smPath} (continuing)\n`);
+          process.stdout.write(
+            `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} pull failed in ${c.cyan(smPath)} ${c.dim("(continuing)")}\n`,
+          );
         }
       } else {
-        process.stdout.write(`chi ship: ${smPath} is in detached HEAD, skipping pull\n`);
+        process.stdout.write(
+          `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} ${c.cyan(smPath)} is in detached HEAD, ${c.dim("skipping pull")}\n`,
+        );
       }
 
       const subRc = await execInherit(process.execPath, [SELF_BIN, "ship"], {
@@ -208,13 +216,17 @@ export async function run(argv: string[]): Promise<number> {
       });
       if (subRc !== 0) {
         failed.push(`${smPath} (ship failed)`);
-        process.stderr.write(`chi ship: ship failed in '${smPath}' (continuing)\n`);
+        process.stderr.write(
+          `${sym.err} ${c.dim(`${BIN_NAME} ship:`)} ship failed in ${c.cyan(`'${smPath}'`)} ${c.dim("(continuing)")}\n`,
+        );
       }
     }
 
     if (failed.length > 0) {
-      process.stderr.write(`\nchi ship: ${failed.length} submodule(s) had errors:\n`);
-      for (const f of failed) process.stderr.write(`  - ${f}\n`);
+      process.stderr.write(
+        `\n${sym.err} ${c.red(`${BIN_NAME} ship: ${failed.length} submodule(s) had errors:`)}\n`,
+      );
+      for (const f of failed) process.stderr.write(`  ${c.red("-")} ${f}\n`);
     }
   }
 
@@ -226,7 +238,7 @@ export async function run(argv: string[]): Promise<number> {
     const ff = git(["-C", repoRoot, "pull", "--ff-only", "--autostash"]);
     if (!ff.ok) {
       process.stderr.write(
-        `chi ship: ff-only pull failed in ${basename(repoRoot)} — trying pull --rebase --autostash\n`,
+        `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} ff-only pull failed in ${c.cyan(basename(repoRoot))} ${c.dim("— trying pull --rebase --autostash")}\n`,
       );
       let rb = git(["-C", repoRoot, "pull", "--rebase", "--autostash"]);
       process.stdout.write(rb.stdout);
@@ -269,7 +281,7 @@ export async function run(argv: string[]): Promise<number> {
           // Rebase succeeded after resolution — continue with ship
         } else {
           process.stderr.write(
-            `chi ship: pull failed in ${basename(repoRoot)} — resolve manually and retry\n`,
+            `${sym.err} ${c.red(`${BIN_NAME} ship:`)} pull failed in ${c.cyan(basename(repoRoot))} ${c.dim("— resolve manually and retry")}\n`,
           );
           return 1;
         }
@@ -297,7 +309,9 @@ export async function run(argv: string[]): Promise<number> {
     const flowLabel = m.pr
       ? `flow: ${m.branch} → ${base}, PR #${m.pr}`
       : `flow: ${m.branch} → ${base}`;
-    process.stdout.write(`\n── repo: ${basename(repoRoot)} (${flowLabel}) ──\n`);
+    process.stdout.write(
+      `\n${c.bold(c.cyan(`── repo: ${basename(repoRoot)} (${flowLabel}) ──`))}\n`,
+    );
 
     const commitRc = await commitRun(["--yes"]);
     if (commitRc !== 0) return commitRc;
@@ -347,9 +361,9 @@ export async function run(argv: string[]): Promise<number> {
         return 1;
       }
       appendFileSync(marker, `pr=${newPr}\n`);
-      process.stdout.write(`\n→ draft PR: ${url}\n`);
+      process.stdout.write(`\n${sym.arrow} ${c.bold("draft PR:")} ${c.cyan(url)}\n`);
     } else {
-      process.stdout.write(`\n→ updated PR #${m.pr}\n`);
+      process.stdout.write(`\n${sym.arrow} ${c.bold(`updated PR #${m.pr}`)}\n`);
     }
     return 0;
   }
@@ -385,15 +399,17 @@ export async function run(argv: string[]): Promise<number> {
     if (recoverBranch) {
       const co = git(["-C", repoRoot, "checkout", recoverBranch]);
       if (co.ok) {
-        process.stdout.write(`chi ship: recovered from detached HEAD, switched to '${recoverBranch}'\n`);
+        process.stdout.write(
+          `${sym.ok} ${c.dim(`${BIN_NAME} ship:`)} recovered from detached HEAD, switched to ${c.cyan(`'${recoverBranch}'`)}\n`,
+        );
       } else {
         process.stdout.write(
-          `chi ship: detached HEAD at ${detachedSha} (could not recover to '${recoverBranch}')\n`,
+          `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} detached HEAD at ${c.yellow(detachedSha.slice(0, 12))} ${c.dim(`(could not recover to '${recoverBranch}')`)}\n`,
         );
       }
     } else {
       process.stdout.write(
-        `chi ship: detached HEAD at ${detachedSha} (no branch contains this commit)\n`,
+        `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} detached HEAD at ${c.yellow(detachedSha.slice(0, 12))} ${c.dim("(no branch contains this commit)")}\n`,
       );
     }
   }
@@ -511,14 +527,18 @@ export async function run(argv: string[]): Promise<number> {
   const dirty = git(["-C", repoRoot, "status", "--porcelain"]).stdout.trim();
   if (!dirty) {
     if (needForceWithLease) {
-      process.stdout.write(`\n── repo: ${basename(repoRoot)} (rebased) ──\n`);
+      process.stdout.write(
+        `\n${c.bold(c.cyan(`── repo: ${basename(repoRoot)} (rebased) ──`))}\n`,
+      );
       const rc = await pushWithRecovery({
         args: ["--force-with-lease"],
         cwd: repoRoot,
       });
       if (rc !== 0) return rc;
     } else {
-      process.stdout.write(`${basename(repoRoot)}: clean\n`);
+      process.stdout.write(
+        `${sym.ok} ${c.bold(basename(repoRoot))}${c.dim(":")} ${c.green("clean")}\n`,
+      );
     }
     // Worktree-aware hint: if the source repo is clean but a chi-managed
     // worktree has an active flow, the user probably ran ship from the wrong
@@ -526,17 +546,23 @@ export async function run(argv: string[]): Promise<number> {
     // `chi issue fix N` — claude's work lives in ../<repo>-issue-N.)
     const flows = listActiveChiFlows();
     if (flows.length > 0) {
-      process.stdout.write(`\n${c.yellow("note:")} active flow(s) in chi-managed worktree(s):\n`);
+      process.stdout.write(
+        `\n${c.bold(c.yellow("note:"))} active flow(s) in chi-managed worktree(s):\n`,
+      );
       for (const f of flows) {
-        const tag = f.flow.issue ? ` (issue #${f.flow.issue})` : "";
-        process.stdout.write(`  ${c.cyan(f.flow.branch)}${tag}\n`);
-        process.stdout.write(`    ${c.dim("→")} cd ${f.worktreePath} && chi ship\n`);
+        const tag = f.flow.issue ? c.magenta(` (issue #${f.flow.issue})`) : "";
+        process.stdout.write(`  ${c.bold(c.cyan(f.flow.branch))}${tag}\n`);
+        process.stdout.write(
+          `    ${sym.arrow} ${c.dim(`cd ${f.worktreePath} && ${BIN_NAME} ship`)}\n`,
+        );
       }
     }
     return 0;
   }
 
-  process.stdout.write(`\n── repo: ${basename(repoRoot)} ──\n`);
+  process.stdout.write(
+    `\n${c.bold(c.cyan(`── repo: ${basename(repoRoot)} ──`))}\n`,
+  );
 
   let rc: number;
   if (git(["-C", repoRoot, "symbolic-ref", "-q", "HEAD"]).ok) {
@@ -551,7 +577,9 @@ export async function run(argv: string[]): Promise<number> {
       rc = await commitRun(["--push", "--yes"]);
     }
   } else {
-    process.stdout.write(`${BIN_NAME} ship: still in detached HEAD, committing without push\n`);
+    process.stdout.write(
+      `${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} still in detached HEAD, ${c.yellow("committing without push")}\n`,
+    );
     rc = await commitRun(["--yes"]);
   }
   return rc;
