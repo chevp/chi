@@ -15,6 +15,8 @@ import * as doctorCmd from "./commands/doctor.js";
 import * as workflowCmd from "./commands/workflow.js";
 import * as workCmd from "./commands/work.js";
 import * as releaseCmd from "./commands/release.js";
+import * as consultCmd from "./commands/consult.js";
+import * as planCmd from "./commands/plan.js";
 import { resolveTrigger } from "./workflow/loader.js";
 
 type CommandRunner = (argv: string[]) => Promise<number>;
@@ -35,6 +37,8 @@ const COMMANDS: Record<string, CommandRunner> = {
   run: workflowCmd.runAlias,
   work: workCmd.run,
   release: releaseCmd.run,
+  consult: consultCmd.run,
+  plan: planCmd.run,
 
   help: helpCmd.run,
   "-h": helpCmd.run,

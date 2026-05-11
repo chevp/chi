@@ -9,6 +9,7 @@ const KEY_TO_ENV: Record<string, string> = {
   llm_url: "CHI_LLM_URL",
   llm_model: "CHI_LLM_MODEL",
   ollama_url: "CHI_OLLAMA_URL",
+  ollama_model: "CHI_OLLAMA_MODEL",
   basic_auth_user: "BASIC_AUTH_USER",
   basic_auth_password: "BASIC_AUTH_PASSWORD",
   max_diff_chars: "CHI_MAX_DIFF_CHARS",

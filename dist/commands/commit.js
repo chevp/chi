@@ -25,7 +25,10 @@ Environment (required):
 
 Environment (optional):
   CHI_LLM_URL              override default cura URL
-  CHI_LLM_MODEL            override default model (default: smollm2:135m)
+  CHI_LLM_MODEL            override default cura model (default: smollm2:135m)
+  CHI_OLLAMA_URL           override default ollama URL (default: http://localhost:11434)
+  CHI_OLLAMA_MODEL         pin a specific ollama model (skips auto-detection,
+                           required when only embedding models are installed)
   CHI_MAX_DIFF_CHARS       diff truncation (default: 8000)
 `;
 function parseArgs(argv) {

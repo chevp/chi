@@ -24,6 +24,12 @@ Commands:
                       framework-driven Claude session (CTX → EXP → PRD)
   explain [question]  ask the active LLM to diagnose the last ${n} ship/commit failure
                       (read-only — prints a suggested command, never executes)
+  consult [question]  multi-turn AI consultation via the claude-agent orchestrator
+                      (defaults to read-only — Read/Glob/Grep + chi.* tools;
+                      add --write for Edit/Write, --dangerously-allow-bash for Bash)
+  plan <sub> [args]   scaffold framework artifacts:
+                      '${n} plan new <CTX|EXP|PRD|PROP|ADR> "<title>"'
+                      '${n} plan list [<type>]'
   init                provision local ollama (verify binary, start server, pull model)
   run <name>          execute a workflow from .che/workflows/<name>.yml
                       (alias for: ${n} workflow run <name>)

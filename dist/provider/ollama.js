@@ -1,5 +1,17 @@
 const DEFAULT_URL = "http://localhost:11434";
 const URL_BASE = () => (process.env.CHI_OLLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, "");
+// Embedding models (e.g. mxbai-embed-large, nomic-embed-text, all-minilm)
+// reject /api/generate with HTTP 400. Skip them when auto-selecting so we
+// don't strand commit/explain flows on a model that physically cannot
+// generate text.
+const EMBED_RE = /(?:^|[-/_:])embed(?:ding)?(?:[-_/:]|$)/i;
+export function isEmbedModel(name) {
+    return EMBED_RE.test(name);
+}
+function pickGenerateModel(models) {
+    const usable = models.find((n) => !isEmbedModel(n));
+    return usable ?? null;
+}
 let cachedModel = null;
 async function fetchWithTimeout(url, init = {}) {
     const { timeoutMs = 1500, ...rest } = init;
@@ -29,7 +41,16 @@ export const ollamaProvider = {
             const models = await listModels();
             if (models.length === 0)
                 return false;
-            cachedModel = models[0] ?? null;
+            const pinned = process.env.CHI_OLLAMA_MODEL?.trim();
+            if (pinned) {
+                const match = models.find((n) => n === pinned || n.startsWith(`${pinned}:`));
+                cachedModel = match ?? pinned;
+            }
+            else {
+                cachedModel = pickGenerateModel(models);
+            }
+            // If only embedding models exist and the user hasn't pinned one,
+            // refuse to claim "reachable" so detection falls back to cura.
             return cachedModel !== null;
         }
         catch {
@@ -53,7 +74,17 @@ export const ollamaProvider = {
             if (models.length === 0) {
                 throw new Error("ollama: no models available at /api/tags");
             }
-            cachedModel = models[0] ?? null;
+            const pinned = process.env.CHI_OLLAMA_MODEL?.trim();
+            if (pinned) {
+                const match = models.find((n) => n === pinned || n.startsWith(`${pinned}:`));
+                cachedModel = match ?? pinned;
+            }
+            else {
+                cachedModel = pickGenerateModel(models);
+            }
+            if (!cachedModel) {
+                throw new Error("ollama: only embedding models are installed — pull a generation model (e.g. 'ollama pull llama3.2') or set CHI_OLLAMA_MODEL to override");
+            }
         }
         const r = await fetch(`${URL_BASE()}/api/generate`, {
             method: "POST",

@@ -6,23 +6,30 @@ import { curaProvider } from "../provider/cura.js";
 import { BIN_NAME } from "../identity.js";
 import { readLine, readSecret } from "../prompt.js";
 
-const HELP = `${BIN_NAME} init — set up cura credentials and verify the endpoint.
+const HELP = `${BIN_NAME} init — set up provider credentials.
 
 Usage: ${BIN_NAME} init [options]
 
-What it does:
+What it does (default — cura provider):
   1. prompts for BASIC_AUTH_USER / BASIC_AUTH_PASSWORD if not already set
   2. saves them to ~/.chi/config (chmod 600)
   3. pings the cura endpoint
   4. confirms the configured model is available
 
+What it does (--provider=claude):
+  1. prompts for ANTHROPIC_API_KEY if not already set
+  2. saves it to ~/.chi/config (chmod 600)
+  3. verifies the orchestrator can be loaded
+
 Options:
-  --force        re-prompt even if credentials are already set
-  -h, --help     show this help
+  --provider <cura|claude>  which provider to configure (default: cura)
+  --force                   re-prompt even if credentials are already set
+  -h, --help                show this help
 
 Environment (optional):
-  CHI_LLM_URL    override the default cura URL
-  CHI_LLM_MODEL  override the default model (default: smollm2:135m)
+  CHI_LLM_URL        override the default cura URL
+  CHI_LLM_MODEL      override the default cura model (default: smollm2:135m)
+  CHI_CLAUDE_MODEL   override the default claude model (default: claude-opus-4-7)
 `;
 
 function ok(msg: string): void {
@@ -118,21 +125,68 @@ async function promptCredentials(force: boolean): Promise<{ user: string; passwo
   return { user, password };
 }
 
-export async function run(argv: string[]): Promise<number> {
-  let force = false;
-  for (const a of argv) {
-    if (a === "-h" || a === "--help") {
-      process.stdout.write(HELP);
-      return 0;
+async function promptAnthropicKey(force: boolean): Promise<string | null> {
+  const persisted = Object.fromEntries(readConfigPairs().map((p) => [p.key, p.value]));
+  const existing = process.env.ANTHROPIC_API_KEY || persisted.anthropic_api_key || "";
+
+  if (!force && existing) {
+    info("ANTHROPIC_API_KEY already set — pass --force to re-prompt");
+    return existing;
+  }
+
+  if (!process.stdin.isTTY) {
+    fail("not a TTY — cannot prompt for ANTHROPIC_API_KEY");
+    info("set ANTHROPIC_API_KEY in env, or run interactively");
+    return null;
+  }
+
+  process.stdout.write("\n");
+  const keyIn = await readSecret("ANTHROPIC_API_KEY: ");
+  const key = (keyIn ?? "").trim();
+  if (!key) {
+    if (existing) {
+      info("(empty input — keeping existing key)");
+      return existing;
     }
-    if (a === "--force") {
-      force = true;
-      continue;
-    }
-    process.stderr.write(`chi init: unknown option '${a}'\n`);
+    fail("ANTHROPIC_API_KEY is required");
+    return null;
+  }
+  return key;
+}
+
+async function runClaude(force: boolean): Promise<number> {
+  const model = process.env.CHI_CLAUDE_MODEL ?? "claude-opus-4-7";
+  process.stdout.write(`chi init — claude (model: ${model})\n`);
+
+  const key = await promptAnthropicKey(force);
+  if (!key) return 1;
+
+  upsertPairs({ anthropic_api_key: key });
+  process.env.ANTHROPIC_API_KEY = key;
+  ok(`saved ANTHROPIC_API_KEY to ${CHI_CONFIG_FILE}`);
+
+  // Lazy-load so this command does not pay the SDK import cost when only
+  // the cura branch runs (CTX-002 #8 / ADR-008 §Decision rule 2).
+  let orchestrator;
+  try {
+    const mod = await import("../orchestrator/index.js");
+    orchestrator = mod.getOrchestrator("claude-agent");
+  } catch (err) {
+    fail(`failed to load orchestrator: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (await orchestrator.ping()) {
+    ok("orchestrator reachable (key present)");
+  } else {
+    fail("orchestrator ping failed");
     return 1;
   }
 
+  process.stdout.write(`\nready. try: ${BIN_NAME} consult "summarize the README"\n`);
+  return 0;
+}
+
+async function runCura(force: boolean): Promise<number> {
   const url = process.env.CHI_LLM_URL ?? "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
   const model = curaProvider.activeModel();
 
@@ -167,4 +221,42 @@ export async function run(argv: string[]): Promise<number> {
 
   process.stdout.write("\nready. try: chi commit\n");
   return 0;
+}
+
+export async function run(argv: string[]): Promise<number> {
+  let force = false;
+  let provider: "cura" | "claude" = "cura";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-h" || a === "--help") {
+      process.stdout.write(HELP);
+      return 0;
+    }
+    if (a === "--force") {
+      force = true;
+      continue;
+    }
+    if (a === "--provider") {
+      const v = argv[++i];
+      if (v !== "cura" && v !== "claude") {
+        process.stderr.write(`chi init: --provider expects 'cura' or 'claude' (got '${v ?? ""}')\n`);
+        return 1;
+      }
+      provider = v;
+      continue;
+    }
+    if (a !== undefined && a.startsWith("--provider=")) {
+      const v = a.slice("--provider=".length);
+      if (v !== "cura" && v !== "claude") {
+        process.stderr.write(`chi init: --provider expects 'cura' or 'claude' (got '${v}')\n`);
+        return 1;
+      }
+      provider = v;
+      continue;
+    }
+    process.stderr.write(`chi init: unknown option '${a ?? ""}'\n`);
+    return 1;
+  }
+
+  return provider === "claude" ? runClaude(force) : runCura(force);
 }

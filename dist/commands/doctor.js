@@ -1,9 +1,9 @@
-import { c } from "../ui.js";
+import { c, sym } from "../ui.js";
 import { CHI_OS } from "../platform.js";
 import { activeProviderName, getProvider, providerEnsureRunning, } from "../provider/index.js";
 import { commandExists, execSync } from "../spawn.js";
 import { curaProvider } from "../provider/cura.js";
-import { ollamaProvider } from "../provider/ollama.js";
+import { ollamaProvider, isEmbedModel } from "../provider/ollama.js";
 import { BIN_NAME } from "../identity.js";
 const HELP = `${BIN_NAME} doctor — verify dependencies and external services.
 
@@ -14,17 +14,27 @@ Targets:
   git          git installation
   ollama       local ollama endpoint reachability + available models
   cura         cura LLM endpoint reachability + configured model
+  claude       claude-agent orchestrator (ANTHROPIC_API_KEY presence)
   workflow     prerequisites for ${BIN_NAME} workflow / ${BIN_NAME} run (none — built-in)
   provider     summary of the active provider (auto-selected: ollama → cura)
 `;
 function ok(msg) {
-    process.stdout.write(`  ${msg}\n`);
+    process.stdout.write(`  ${sym.ok} ${msg}\n`);
 }
 function fail(msg) {
-    process.stdout.write(`  ${c.red("error:")} ${msg}\n`);
+    process.stdout.write(`  ${sym.err} ${c.red("error:")} ${msg}\n`);
+}
+function warn(msg) {
+    process.stdout.write(`  ${sym.warn} ${c.yellow("warn:")} ${msg}\n`);
 }
 function info(msg) {
-    process.stdout.write(`  ${c.dim("hint:")} ${msg}\n`);
+    process.stdout.write(`  ${c.dim("hint:")} ${c.dim(msg)}\n`);
+}
+function formatProviderSummary() {
+    const name = activeProviderName();
+    const model = getProvider().activeModel();
+    const modelLabel = isEmbedModel(model) ? c.red(model) : c.green(model);
+    return `${c.bold("active provider:")} ${c.cyan(name)} ${c.dim("(model:")} ${modelLabel}${c.dim(")")}`;
 }
 function gitInstallHint() {
     switch (CHI_OS) {
@@ -91,7 +101,16 @@ function gitCheck() {
 }
 async function ollamaCheck() {
     const url = process.env.CHI_OLLAMA_URL ?? "http://localhost:11434";
-    if (!(await ollamaProvider.ping())) {
+    const reachable = await ollamaProvider.ping();
+    if (!reachable) {
+        // ping() also returns false when only embedding models are installed.
+        // Probe directly so we can tell the user *which* failure they hit.
+        if (await ollamaProvider.hasModel()) {
+            fail("only embedding models available — they cannot generate text");
+            info("pull a generation model: ollama pull llama3.2");
+            info("or pin one explicitly: export CHI_OLLAMA_MODEL=<model>");
+            return false;
+        }
         fail(`endpoint not reachable at ${url}`);
         info("start ollama with: ollama serve");
         info("or set CHI_OLLAMA_URL to point at a remote ollama");
@@ -100,7 +119,9 @@ async function ollamaCheck() {
     ok(`endpoint responding at ${url}`);
     const model = ollamaProvider.activeModel();
     if (model && model !== "(detecting)") {
-        ok(`model selected: ${model}  (first entry from /api/tags)`);
+        const pinned = process.env.CHI_OLLAMA_MODEL?.trim();
+        const sourceLabel = pinned ? "from CHI_OLLAMA_MODEL" : "auto-selected (skips embedding models)";
+        ok(`model selected: ${c.cyan(model)}  ${c.dim(`(${sourceLabel})`)}`);
     }
     else {
         fail("no models available — pull one with: ollama pull <model>");
@@ -144,6 +165,32 @@ function workflowCheck() {
     ok("workflow loader (built-in YAML parser, no extra deps)");
     return true;
 }
+async function claudeCheck() {
+    if (!process.env.ANTHROPIC_API_KEY) {
+        fail("ANTHROPIC_API_KEY not set");
+        info(`run: ${BIN_NAME} init --provider=claude`);
+        info("or: export ANTHROPIC_API_KEY=sk-ant-...");
+        return false;
+    }
+    ok("ANTHROPIC_API_KEY present");
+    // Lazy-load so users without the SDK installed (or without the dep mirrored
+    // in node_modules yet) still get a useful first message above. Per ADR-008
+    // §Decision rule 2 — the orchestrator dep is only paid for when needed.
+    try {
+        const mod = await import("../orchestrator/index.js");
+        const orchestrator = mod.getOrchestrator("claude-agent");
+        if (await orchestrator.ping())
+            ok("orchestrator loadable");
+        else
+            fail("orchestrator ping failed");
+    }
+    catch (err) {
+        fail(`orchestrator import failed: ${err instanceof Error ? err.message : String(err)}`);
+        info("did you run `npm install`? @anthropic-ai/claude-agent-sdk + xstate are required");
+        return false;
+    }
+    return true;
+}
 async function runSection(name, fn) {
     process.stdout.write(`${name}:\n`);
     try {
@@ -165,9 +212,18 @@ export async function run(argv) {
         case "cura":
             await runSection("cura", curaCheck);
             return 0;
+        case "claude":
+            await runSection("claude", claudeCheck);
+            return 0;
         case "provider": {
             await providerEnsureRunning().catch(() => false);
-            process.stdout.write(`active provider: ${activeProviderName()} (model: ${getProvider().activeModel()})\n`);
+            const model = getProvider().activeModel();
+            process.stdout.write(`${formatProviderSummary()}\n`);
+            if (isEmbedModel(model)) {
+                warn(`'${model}' is an embedding model — /api/generate will return HTTP 400`);
+                info("pull a generation model: ollama pull llama3.2");
+                info("or pin one explicitly: export CHI_OLLAMA_MODEL=<model>");
+            }
             return 0;
         }
         case "workflow":
@@ -180,14 +236,22 @@ export async function run(argv) {
         case "all":
         case "":
         case undefined: {
-            process.stdout.write(`platform: ${CHI_OS}\n`);
+            process.stdout.write(`${c.bold("platform:")} ${c.cyan(CHI_OS)}\n`);
             await providerEnsureRunning().catch(() => false);
-            process.stdout.write(`active provider: ${activeProviderName()} (model: ${getProvider().activeModel()})\n\n`);
+            const model = getProvider().activeModel();
+            process.stdout.write(`${formatProviderSummary()}\n`);
+            if (isEmbedModel(model)) {
+                warn(`'${model}' is an embedding model — /api/generate will return HTTP 400`);
+                info("pull a generation model: ollama pull llama3.2");
+                info("or pin one explicitly: export CHI_OLLAMA_MODEL=<model>");
+            }
+            process.stdout.write("\n");
             await runSection("git", gitCheck);
             await runSection("ollama", ollamaCheck);
             await runSection("cura", curaCheck);
+            await runSection("claude", claudeCheck);
             await runSection("workflow", workflowCheck);
-            process.stdout.write("shell deps:\n");
+            process.stdout.write(`${c.bold("shell deps:")}\n`);
             for (const bin of ["curl", "bash"]) {
                 if (commandExists(bin))
                     ok(bin);
@@ -198,7 +262,7 @@ export async function run(argv) {
         }
         default:
             process.stderr.write(`chi doctor: unknown target '${target}'\n`);
-            process.stderr.write("valid: all, git, ollama, cura, workflow, provider\n");
+            process.stderr.write("valid: all, git, ollama, cura, claude, workflow, provider\n");
             return 1;
     }
 }
