@@ -289,6 +289,27 @@ export async function run(argv) {
                 }
             }
         }
+        // --autostash pop can leave unmerged paths in the index even when the
+        // pull itself returned success (ff/rebase worked, but the stash didn't
+        // re-apply cleanly). Those bypass the rebase-conflict branch above, so
+        // check explicitly and route them through the same resolver.
+        const postPullGitDir = git(["-C", repoRoot, "rev-parse", "--git-dir"]).stdout.trim();
+        const stillInRebase = existsSync(join(postPullGitDir, "rebase-merge")) ||
+            existsSync(join(postPullGitDir, "rebase-apply"));
+        if (!stillInRebase) {
+            const unmerged = git([
+                "-C", repoRoot, "diff", "--name-only", "--diff-filter=U",
+            ]).stdout.trim();
+            if (unmerged) {
+                const count = unmerged.split(/\r?\n/).filter(Boolean).length;
+                process.stdout.write(`${sym.warn} ${c.dim(`${BIN_NAME} ship:`)} autostash pop left ${c.yellow(`${count} file(s)`)} ${c.dim("with conflicts — invoking resolver")}\n`);
+                const result = await resolveConflicts(repoRoot);
+                if (result.aborted || result.skipped > 0) {
+                    process.stderr.write(`${BIN_NAME} ship: ${result.skipped} file(s) unresolved after autostash pop — resolve manually and retry\n`);
+                    return 1;
+                }
+            }
+        }
     }
     // --- flow mode ---
     if (existsSync(marker)) {
