@@ -13,8 +13,6 @@ const STATIC_EXT_TYPES = {
     ".map": "application/json; charset=utf-8",
 };
 const TOOLS = new Set(["status", "doctor", "help", "config"]);
-const CURA_DEFAULT_URL = "https://cura-llm-3j2fyuwcdq-oa.a.run.app";
-const CURA_DEFAULT_MODEL = "smollm2:135m";
 const OLLAMA_DEFAULT_URL = "http://localhost:11434";
 const EMBED_RE = /(?:^|[-/_:])embed(?:ding)?(?:[-_/:]|$)/i;
 function parseArgs(argv) {
@@ -36,7 +34,7 @@ function parseArgs(argv) {
     return args;
 }
 function helpText() {
-    return `${BIN_NAME} serve — start a local web console (chat UI over cura + local ollama)
+    return `${BIN_NAME} serve — start a local web console (chat UI over local ollama; remote cura is opt-in)
 
 Usage: ${BIN_NAME} serve [--port <n>] [--host <h>] [--no-open]
 
@@ -45,6 +43,14 @@ Options:
   --host <h>        bind address (default 127.0.0.1)
   --no-open         do not open a browser
   --help, -h        show this message
+
+Environment:
+  CHI_OLLAMA_URL    ollama base URL (default http://localhost:11434)
+  CHI_OLLAMA_MODEL  pin a default ollama model (optional)
+  CHI_LLM_URL       remote provider base URL — set to enable cura
+  CHI_LLM_MODEL     pin a default remote model (optional)
+  BASIC_AUTH_USER   basic-auth user for the remote provider
+  BASIC_AUTH_PASSWORD  basic-auth password for the remote provider
 
 Routes (same-origin):
   GET  /             → static console UI
@@ -58,10 +64,10 @@ Routes (same-origin):
 /** Resolve the static-assets directory, regardless of where chi runs from. */
 function staticRoot() {
     const here = dirname(fileURLToPath(import.meta.url));
-    const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console-v2");
+    const fallback = resolve(here, "..", "..", "context", "prototypes", "ux-console-v3");
     const candidates = [
         fallback,
-        resolve(here, "..", "..", "..", "context", "prototypes", "ux-console-v2"),
+        resolve(here, "..", "..", "..", "context", "prototypes", "ux-console-v3"),
     ];
     for (const c of candidates) {
         if (existsSync(join(c, "index.html")))
@@ -91,11 +97,16 @@ function sendJson(res, status, body) {
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(body));
 }
+// Cura is an opt-in remote provider — there is no built-in default URL or
+// model. Setting CHI_LLM_URL (and BASIC_AUTH_USER/PASSWORD) activates it.
 function curaUrlBase() {
-    return (process.env.CHI_LLM_URL ?? CURA_DEFAULT_URL).replace(/\/+$/, "");
+    const raw = process.env.CHI_LLM_URL?.trim();
+    if (!raw)
+        return null;
+    return raw.replace(/\/+$/, "");
 }
 function curaModel() {
-    return process.env.CHI_LLM_MODEL ?? CURA_DEFAULT_MODEL;
+    return process.env.CHI_LLM_MODEL?.trim() ?? "";
 }
 function ollamaUrlBase() {
     return (process.env.CHI_OLLAMA_URL ?? OLLAMA_DEFAULT_URL).replace(/\/+$/, "");
@@ -134,11 +145,12 @@ async function listOllamaModels() {
     }
 }
 async function listCuraModels() {
+    const url = curaUrlBase();
     const auth = basicAuthHeader();
-    if (!auth)
+    if (!url || !auth)
         return [];
     try {
-        const r = await fetchWithTimeout(`${curaUrlBase()}/api/tags`, {
+        const r = await fetchWithTimeout(`${url}/api/tags`, {
             headers: { Authorization: auth },
             timeoutMs: 5000,
         });
@@ -165,7 +177,7 @@ async function handleHealth(_req, res) {
     const [ollamaModels, curaModels] = await Promise.all([listOllamaModels(), listCuraModels()]);
     const ollamaOk = ollamaModels.length > 0;
     const curaOk = curaModels.length > 0;
-    const def = ollamaOk ? "ollama" : "cura";
+    const def = curaOk && !ollamaOk ? "cura" : "ollama";
     sendJson(res, 200, {
         ok: ollamaOk || curaOk,
         default: def,
@@ -173,7 +185,8 @@ async function handleHealth(_req, res) {
             ollama: { ok: ollamaOk, url: ollamaUrlBase(), models: ollamaModels.length },
             cura: {
                 ok: curaOk,
-                url: curaUrlBase(),
+                url: curaUrlBase() ?? null,
+                configured: curaUrlBase() !== null,
                 models: curaModels.length,
                 auth: basicAuthHeader() !== null,
             },
@@ -222,8 +235,8 @@ async function handleChat(req, res) {
         modelName = payload.model ?? "";
     }
     else {
-        provider = "cura";
-        modelName = payload.model ?? curaModel();
+        provider = "ollama";
+        modelName = payload.model ?? "";
     }
     if (!modelName) {
         sendJson(res, 400, { error: "missing model name" });
@@ -232,6 +245,13 @@ async function handleChat(req, res) {
     let url;
     const headers = { "Content-Type": "application/json" };
     if (provider === "cura") {
+        const base = curaUrlBase();
+        if (!base) {
+            sendJson(res, 412, {
+                error: "CHI_LLM_URL not set — cura provider is opt-in; export CHI_LLM_URL to enable it",
+            });
+            return;
+        }
         const auth = basicAuthHeader();
         if (!auth) {
             sendJson(res, 412, {
@@ -240,7 +260,7 @@ async function handleChat(req, res) {
             return;
         }
         headers["Authorization"] = auth;
-        url = `${curaUrlBase()}/api/chat`;
+        url = `${base}/api/chat`;
     }
     else {
         url = `${ollamaUrlBase()}/api/chat`;
@@ -391,7 +411,7 @@ export async function run(argv) {
     const root = staticRoot();
     if (!existsSync(join(root, "index.html"))) {
         process.stderr.write(`${BIN_NAME} serve: static assets not found at ${root}\n` +
-            "Reinstall chi or check that context/prototypes/ux-console-v2/ ships in the package.\n");
+            "Reinstall chi or check that context/prototypes/ux-console-v3/ ships in the package.\n");
         return 1;
     }
     const server = createServer(async (req, res) => {

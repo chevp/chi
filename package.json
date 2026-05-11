@@ -1,6 +1,6 @@
 {
   "name": "chi",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "private": true,
   "description": "Personal CLI utilities — Node.js port of che-cli",
   "type": "module",
@@ -15,7 +15,8 @@
     ".che",
     "scripts",
     "context/prototypes/ux-console",
-    "context/prototypes/ux-console-v2"
+    "context/prototypes/ux-console-v2",
+    "context/prototypes/ux-console-v3"
   ],
   "scripts": {
     "build": "tsc",

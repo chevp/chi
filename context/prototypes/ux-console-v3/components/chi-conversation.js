@@ -55,7 +55,7 @@ class ChiConversation extends HTMLElement {
                             </select>
                             <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
                         </div>
-                        <span data-slot="provider-badge" class="topbar-eyebrow">cura</span>
+                        <span data-slot="provider-badge" class="topbar-eyebrow">—</span>
                         <span data-slot="agent-badge" class="topbar-eyebrow agent-eyebrow" hidden></span>
                     </div>
                     <div class="topbar-right">
@@ -222,7 +222,7 @@ class ChiConversation extends HTMLElement {
         const title = agent ? `Start with ${escapeHtml(agent.title)}` : "What can chi do for you?";
         const sub = agent
             ? escapeHtml(agent.blurb)
-            : "A chat surface over the same cura backend chi uses on the CLI. Ask for a commit message, a diff summary, or run a tool from the sidebar.";
+            : "A chat surface over your configured providers (local ollama by default; remote cura is opt-in). Ask for a commit message, a diff summary, or run a tool from the sidebar.";
         wrap.innerHTML = `<h1>${title}</h1><p class="welcome-sub">${sub}</p>
             <div class="suggestion-grid"></div>`;
         const grid = wrap.querySelector(".suggestion-grid");
