@@ -9,9 +9,10 @@ import { BIN_NAME } from "../identity.js";
 
 // npm 11.x git fetcher leaves node_modules/chi as a dangling symlink to
 // <cache>/_cacache/tmp/git-clone<rand> on Windows global installs, so we
-// install from the tarball URL (different pacote code path) instead of
-// github:chevp/chi.
-const REMOTE = "https://github.com/chevp/chi/archive/refs/heads/main.tar.gz";
+// install from a release-asset tarball URL (npm tarball fetcher, different
+// pacote code path) instead of github:chevp/chi. The asset is produced by
+// .github/workflows/release.yml on every vX.Y.Z tag.
+const REMOTE = "https://github.com/chevp/chi/releases/latest/download/chi.tgz";
 
 const HELP = `${BIN_NAME} update — repair workspace state, then update ${BIN_NAME} itself.
 
