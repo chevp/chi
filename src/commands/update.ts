@@ -7,7 +7,11 @@ import { recoverRepo, printReport, summarize, type RecoveryReport } from "../rec
 import { c, kv, section } from "../ui.js";
 import { BIN_NAME } from "../identity.js";
 
-const REMOTE = "github:chevp/chi";
+// npm 11.x git fetcher leaves node_modules/chi as a dangling symlink to
+// <cache>/_cacache/tmp/git-clone<rand> on Windows global installs, so we
+// install from the tarball URL (different pacote code path) instead of
+// github:chevp/chi.
+const REMOTE = "https://github.com/chevp/chi/archive/refs/heads/main.tar.gz";
 
 const HELP = `${BIN_NAME} update — repair workspace state, then update ${BIN_NAME} itself.
 

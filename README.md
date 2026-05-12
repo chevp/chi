@@ -23,7 +23,7 @@ git
 Requires Node 20+.
 
 ```sh
-npm install -g github:chevp/chi
+npm install -g https://github.com/chevp/chi/archive/refs/heads/main.tar.gz
 ```
 
 Installs the prebuilt `dist/` from the github tarball and places three binaries on PATH via npm's global bin: `chi`, `che`, and `jan`. All three resolve to the same launcher; each presents itself with its invoked name in help text and error prefixes (see [ADR-009](context/adr/ADR-009-unified-binary-aliases.md)).
@@ -32,7 +32,7 @@ If a previous standalone `che-cli` or `jan-cli` is installed, uninstall it first
 
 ```sh
 npm uninstall -g che-cli jan-cli
-npm install -g github:chevp/chi
+npm install -g https://github.com/chevp/chi/archive/refs/heads/main.tar.gz
 ```
 
 ### From a local clone (development)
@@ -72,7 +72,7 @@ Once installed, chi can update itself — works for both global and from-source 
 chi update
 ```
 
-It detects the install layout and either runs `npm install -g github:chevp/chi` (global) or `git pull --ff-only && npm install` (workspace clone — the pulled commit is expected to ship a fresh `dist/`).
+It detects the install layout and either runs `npm install -g https://github.com/chevp/chi/archive/refs/heads/main.tar.gz` (global) or `git pull --ff-only && npm install` (workspace clone — the pulled commit is expected to ship a fresh `dist/`).
 
 ## Usage
 
