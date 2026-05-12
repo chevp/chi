@@ -12,6 +12,8 @@ import { BIN_NAME } from "../identity.js";
 const VALID_KEYS = [
   "llm_url",
   "llm_model",
+  "ollama_url",
+  "ollama_model",
   "basic_auth_user",
   "basic_auth_password",
   "max_diff_chars",
@@ -31,6 +33,8 @@ Usage:
 Keys:
   llm_url               cura endpoint URL              (default: https://cura-llm-3j2fyuwcdq-oa.a.run.app)
   llm_model             cura model name                (default: smollm2:135m)
+  ollama_url            local ollama endpoint          (default: http://localhost:11434)
+  ollama_model          local ollama model name        (default: first non-embedding model from 'ollama list')
   basic_auth_user       cura basic-auth username       (REQUIRED)
   basic_auth_password   cura basic-auth password       (REQUIRED)
   max_diff_chars        diff truncation length         (default: 8000)
@@ -59,8 +63,9 @@ function validateValue(key: ValidKey, value: string): string | null {
       }
       return null;
     case "llm_url":
+    case "ollama_url":
       if (!/^https?:\/\//.test(value)) {
-        return `${BIN_NAME} config: llm_url must start with http:// or https://`;
+        return `${BIN_NAME} config: ${key} must start with http:// or https://`;
       }
       return null;
     default:
