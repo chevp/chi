@@ -1,6 +1,9 @@
 import type { Provider, ProviderName } from "./types.js";
 import { curaProvider } from "./cura.js";
 import { ollamaProvider } from "./ollama.js";
+import { commandExists } from "../spawn.js";
+import { c } from "../ui.js";
+import { BIN_NAME } from "../identity.js";
 
 class Semaphore {
   private slots: number;
@@ -47,6 +50,13 @@ async function detect(): Promise<Provider> {
     if (await ollamaProvider.ping()) {
       selected = ollamaProvider;
     } else {
+      if (commandExists("ollama")) {
+        process.stderr.write(
+          c.dim(
+            `${BIN_NAME}: ollama installed but not running — start it with 'ollama serve' (falling back to cura)\n`,
+          ),
+        );
+      }
       selected = curaProvider;
     }
     return selected;
